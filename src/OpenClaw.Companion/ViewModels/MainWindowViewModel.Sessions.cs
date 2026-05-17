@@ -193,14 +193,20 @@ public sealed partial class MainWindowViewModel
         }
         catch (OperationCanceledException ex) when (SelectedSession?.SessionId == requestedSessionId)
         {
+            ReplaceItems(SessionTimelineRows, []);
+            OnPropertyChanged(nameof(HasSessionTimelineRows));
             SelectedSessionDetail = $"Session detail load canceled: {ex.Message}";
         }
         catch (HttpRequestException ex) when (SelectedSession?.SessionId == requestedSessionId)
         {
+            ReplaceItems(SessionTimelineRows, []);
+            OnPropertyChanged(nameof(HasSessionTimelineRows));
             SelectedSessionDetail = $"Session detail load failed: {ex.Message}";
         }
         catch (InvalidOperationException ex) when (SelectedSession?.SessionId == requestedSessionId)
         {
+            ReplaceItems(SessionTimelineRows, []);
+            OnPropertyChanged(nameof(HasSessionTimelineRows));
             SelectedSessionDetail = $"Session detail load failed: {ex.Message}";
         }
     }

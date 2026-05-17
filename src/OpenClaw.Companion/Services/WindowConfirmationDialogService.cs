@@ -90,7 +90,18 @@ public sealed class WindowConfirmationDialogService(Window owner) : IConfirmatio
         if (cancellationToken.IsCancellationRequested)
             return false;
 
-        await dialog.ShowDialog(owner);
+        try
+        {
+            await dialog.ShowDialog(owner).WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            result = false;
+            if (dialog.IsVisible)
+                dialog.Close();
+            return false;
+        }
+
         return result && !cancellationToken.IsCancellationRequested;
     }
 }

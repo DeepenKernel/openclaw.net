@@ -1617,7 +1617,7 @@ public sealed class GatewayAdminEndpointTests
             var metadata = approvePayload.RootElement.GetProperty("metadata");
             Assert.Equal("true", metadata.GetProperty("reloadFailed").GetString());
             Assert.Equal("Skill reload failed.", metadata.GetProperty("reloadError").GetString());
-            Assert.Contains("InvalidOperationException", metadata.GetProperty("reloadException").GetString());
+            Assert.Equal("InvalidOperationException", metadata.GetProperty("reloadException").GetString());
             Assert.True(File.Exists(Path.Join(skillPath, "SKILL.md")));
 
             using var detailRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/learning/proposals/lp_reload_failure_skill");
@@ -1628,7 +1628,7 @@ public sealed class GatewayAdminEndpointTests
             var persistedMetadata = detailPayload.RootElement.GetProperty("proposal").GetProperty("metadata");
             Assert.Equal("true", persistedMetadata.GetProperty("reloadFailed").GetString());
             Assert.Equal("Skill reload failed.", persistedMetadata.GetProperty("reloadError").GetString());
-            Assert.Contains("InvalidOperationException", persistedMetadata.GetProperty("reloadException").GetString());
+            Assert.Equal("InvalidOperationException", persistedMetadata.GetProperty("reloadException").GetString());
         }
         finally
         {

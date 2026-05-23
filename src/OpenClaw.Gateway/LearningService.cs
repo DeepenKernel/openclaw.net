@@ -188,7 +188,7 @@ internal sealed class LearningService
                     {
                         ["reloadFailed"] = "true",
                         ["reloadError"] = ex.Message,
-                        ["reloadException"] = ex.ToString()
+                        ["reloadException"] = ex.GetType().Name
                     };
                     _logger.LogWarning(ex, "Approved learning skill proposal '{ProposalId}' was saved, but live skill reload failed.", proposal.Id);
                 }
@@ -1149,7 +1149,7 @@ Use it when repeated requests resemble the sessions that produced this draft.
         string? appliedAutomationId = null,
         string? managedSkillPath = null,
         ManagedLearningSkillMetadata? managedSkillMetadata = null,
-        Dictionary<string, string>? metadata = null,
+        IReadOnlyDictionary<string, string>? metadata = null,
         IReadOnlyList<string>? sourceSessionIds = null,
         IReadOnlyList<string>? sourceTurnIds = null,
         float? confidence = null,
@@ -1181,7 +1181,9 @@ Use it when repeated requests resemble the sessions that produced this draft.
             AppliedAutomationId = appliedAutomationId ?? proposal.AppliedAutomationId,
             ManagedSkillPath = managedSkillPath ?? proposal.ManagedSkillPath,
             ManagedSkillMetadata = managedSkillMetadata ?? proposal.ManagedSkillMetadata,
-            Metadata = metadata ?? proposal.Metadata,
+            Metadata = metadata is null
+                ? new Dictionary<string, string>(proposal.Metadata, StringComparer.Ordinal)
+                : new Dictionary<string, string>(metadata, StringComparer.Ordinal),
             SourceSessionIds = sourceSessionIds ?? proposal.SourceSessionIds,
             SourceTurnIds = sourceTurnIds ?? proposal.SourceTurnIds,
             ToolNames = proposal.ToolNames,

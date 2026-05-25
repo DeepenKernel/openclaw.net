@@ -487,6 +487,26 @@ public class SkillLoaderTests
             Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public void LoadAll_ManagedRoot_InvalidPath_DoesNotThrow()
+    {
+        var config = new SkillsConfig
+        {
+            Enabled = true,
+            Load = new SkillLoadConfig
+            {
+                IncludeBundled = false,
+                IncludeWorkspace = false,
+                ManagedRoot = "invalid\0managed-root"
+            }
+        };
+        var logger = new TestLogger();
+
+        var skills = SkillLoader.LoadAll(config, null, logger);
+
+        Assert.Empty(skills);
+    }
 }
 
 public class SkillPromptBuilderTests

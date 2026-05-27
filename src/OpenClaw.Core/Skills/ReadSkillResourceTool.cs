@@ -41,10 +41,12 @@ public sealed class ReadSkillResourceTool : ITool
     public string Description =>
         "Read the contents of a single auxiliary resource (reference document or script) "
         + "associated with a skill. Resource names are listed in the <skill-resources> manifest "
-        + "either inside the index or alongside a loaded skill body.";
+        + "either inside the index or alongside a loaded skill body. "
+        + "Never call this tool with 'SKILL.md' — that is the skill body itself, fetch it via `load_skill`. "
+        + "Cross-skill paths (e.g. '../other-skill/...') and absolute paths are not accepted.";
 
     public string ParameterSchema =>
-        """{"type":"object","properties":{"skill":{"type":"string","description":"Skill name (as listed in <available-skills>)"},"resource":{"type":"string","description":"Resource name — either bare file name (e.g. \"lookup.md\") or relative path (e.g. \"references/lookup.md\")"}},"required":["skill","resource"]}""";
+        """{"type":"object","properties":{"skill":{"type":"string","description":"Skill name (as listed in <available-skills>)"},"resource":{"type":"string","description":"Resource name — either bare file name (e.g. \"lookup.md\") or relative path (e.g. \"references/lookup.md\"). Must be listed in this skill's own <resources> manifest; do not pass \"SKILL.md\" (use load_skill) or paths containing \"..\""}},"required":["skill","resource"]}""";
 
     public async ValueTask<string> ExecuteAsync(string argumentsJson, CancellationToken ct)
     {

@@ -32,7 +32,9 @@ public sealed class LoadSkillTool : ITool
     public string Description =>
         "Load the full instructions of a named skill on demand. The system prompt only lists "
         + "skill metadata and a resource manifest; call this tool when a specific skill is "
-        + "relevant to fetch its complete SKILL.md body.";
+        + "relevant to fetch its complete SKILL.md body. "
+        + "Always use this tool (never `read_skill_resource`) to fetch any skill's SKILL.md, "
+        + "including when another skill's body is referenced by a sibling skill.";
 
     public string ParameterSchema =>
         """{"type":"object","properties":{"skill":{"type":"string","description":"Skill name to load (as listed in <available-skills>)"}},"required":["skill"]}""";

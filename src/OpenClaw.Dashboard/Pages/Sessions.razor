@@ -489,6 +489,39 @@
             using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
             var root = doc.RootElement;
 
+            // Gateway returns AdminSessionsResponse: { active: [...], persisted: { items: [...], hasMore } }.
+            // Older / alternative shapes ({ sessions: [...] } or { items: [...] } or a bare array) are still
+            // supported as a fallback so this page works against any compatible backend.
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object
+                && (root.TryGetProperty("active", out var activeArr) && activeArr.ValueKind == System.Text.Json.JsonValueKind.Array
+                    || root.TryGetProperty("persisted", out _)))
+            {
+                var merged = new List<SessionInfo>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+
+                if (activeArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    AppendSessionSummaries(activeArr, merged, seen);
+
+                _hasMore = false;
+                if (root.TryGetProperty("persisted", out var persisted)
+                    && persisted.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    if (persisted.TryGetProperty("items", out var pItems)
+                        && pItems.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        AppendSessionSummaries(pItems, merged, seen);
+                    }
+                    if (persisted.TryGetProperty("hasMore", out var hmNested)
+                        && hmNested.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+                    {
+                        _hasMore = hmNested.GetBoolean();
+                    }
+                }
+
+                _sessions = merged;
+                return;
+            }
+
             System.Text.Json.JsonElement arr = root;
             if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
@@ -788,5 +821,42 @@
     public void Dispose()
     {
         L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+
+    /// <summary>
+    /// Maps Gateway's <c>SessionSummary</c> array (camelCase: <c>id</c>, <c>channelId</c>,
+    /// <c>senderId</c>, <c>lastActiveAt</c>) into Dashboard's <see cref="SessionInfo"/>
+    /// records, deduping by id so an "active" entry is not double-listed by the persisted page.
+    /// </summary>
+    private static void AppendSessionSummaries(
+        System.Text.Json.JsonElement array,
+        List<SessionInfo> dest,
+        HashSet<string> seen)
+    {
+        foreach (var el in array.EnumerateArray())
+        {
+            if (el.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+
+            var id = ReadJsonString(el, "id") ?? ReadJsonString(el, "sessionId");
+            if (string.IsNullOrEmpty(id) || !seen.Add(id)) continue;
+
+            var channelId = ReadJsonString(el, "channelId");
+            var senderId = ReadJsonString(el, "senderId");
+            var lastActive = ReadJsonDateTime(el, "lastActiveAt") ?? ReadJsonDateTime(el, "lastActive");
+
+            dest.Add(new SessionInfo(id, channelId, senderId, lastActive, null));
+        }
+    }
+
+    private static string? ReadJsonString(System.Text.Json.JsonElement el, string name)
+        => el.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+            ? v.GetString()
+            : null;
+
+    private static DateTime? ReadJsonDateTime(System.Text.Json.JsonElement el, string name)
+    {
+        if (!el.TryGetProperty(name, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.String)
+            return null;
+        return v.TryGetDateTime(out var dt) ? dt : null;
     }
 }

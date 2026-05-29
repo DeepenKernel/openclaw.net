@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using OpenClaw.SkillKit.Abstractions;
 
@@ -45,14 +46,17 @@ public sealed class SkillPackageReader
             {
                 packages.Add(await ReadAsync(directory, skillsRoot, cancellationToken));
             }
-            catch (IOException)
+            catch (IOException ex)
             {
+                Trace.TraceWarning("Skipping skill package at '{0}' because it could not be read: {1}", directory, ex.Message);
             }
-            catch (InvalidDataException)
+            catch (InvalidDataException ex)
             {
+                Trace.TraceWarning("Skipping skill package at '{0}' because it is invalid: {1}", directory, ex.Message);
             }
-            catch (UnauthorizedAccessException)
+            catch (UnauthorizedAccessException ex)
             {
+                Trace.TraceWarning("Skipping skill package at '{0}' because access was denied: {1}", directory, ex.Message);
             }
         }
 

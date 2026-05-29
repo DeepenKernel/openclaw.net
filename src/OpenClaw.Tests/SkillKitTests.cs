@@ -45,6 +45,24 @@ public sealed class SkillKitTests
     }
 
     [Fact]
+    public void ResolvePackageFilePath_EnforcesPackageRootContainment()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var resolved = SkillPackageReader.ResolvePackageFilePath(root, "intent.md");
+
+            Assert.Equal(Path.GetFullPath(Path.Join(root, "intent.md")), resolved);
+            Assert.Throws<InvalidDataException>(() => SkillPackageReader.ResolvePackageFilePath(root, Path.GetFullPath(Path.Join(root, "escape.md"))));
+            Assert.Throws<InvalidDataException>(() => SkillPackageReader.ResolvePackageFilePath(root, "../escape.md"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Generate_RestoresMissingFilesWithoutOverwritingUnlessForced()
     {
         var root = CreateTempRoot();

@@ -6,9 +6,6 @@ public sealed class DynamicTurnRoutingConfig
     public string BundlePath { get; set; } = "";
     public DynamicTurnRoutingAssetsConfig Assets { get; set; } = new();
     public DynamicTurnRoutingPolicyConfig Policy { get; set; } = new();
-    public DynamicTurnRoutingClassifierConfig Classifier { get; set; } = new();
-    public DynamicTurnRoutingEmbeddingsConfig Embeddings { get; set; } = new();
-    public DynamicTurnRoutingTierMap Tiers { get; set; } = new();
 }
 
 public sealed class DynamicTurnRoutingAssetsConfig
@@ -31,18 +28,6 @@ public sealed class DynamicTurnRoutingPolicyConfig
     public float R1RescueThreshold { get; set; } = 0.20f;
     public float UnderRoutingSafetyThreshold { get; set; } = 0.45f;
     public int DeepConversationTurnIndexThreshold { get; set; } = 4;
-}
-
-public sealed class DynamicTurnRoutingClassifierConfig
-{
-    public string ModelPath { get; set; } = "";
-}
-
-public sealed class DynamicTurnRoutingEmbeddingsConfig
-{
-    public string ModelPath { get; set; } = "";
-    public string TokenizerPath { get; set; } = "";
-    public int Dimensions { get; set; } = 384;
 }
 
 public sealed class DynamicTurnRoutingTierMap

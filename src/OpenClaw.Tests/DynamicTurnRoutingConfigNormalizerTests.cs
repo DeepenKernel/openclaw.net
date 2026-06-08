@@ -7,24 +7,27 @@ namespace OpenClaw.Tests;
 public sealed class DynamicTurnRoutingConfigNormalizerTests
 {
     [Fact]
-    public void Normalize_LegacyRoutingConfig_MapsIntoResolvedModel()
+    public void Normalize_DirectRoutingConfig_MapsIntoResolvedModel()
     {
         var config = new DynamicTurnRoutingConfig
         {
             Enabled = true,
-            Classifier = new DynamicTurnRoutingClassifierConfig { ModelPath = "classifier.onnx" },
-            Embeddings = new DynamicTurnRoutingEmbeddingsConfig
+            Assets = new DynamicTurnRoutingAssetsConfig
             {
-                ModelPath = "embeddings.onnx",
+                ClassifierModelPath = "classifier.onnx",
+                EmbeddingModelPath = "embeddings.onnx",
                 TokenizerPath = "tokenizer.json",
                 Dimensions = 384
             },
-            Tiers = new DynamicTurnRoutingTierMap
+            Policy = new DynamicTurnRoutingPolicyConfig
             {
-                T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "local-freeform", DisableTools = true },
-                T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "mini-readonly", AllowedTools = ["read_file"] },
-                T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-deep" }
+                Tiers = new DynamicTurnRoutingTierMap
+                {
+                    T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "local-freeform", DisableTools = true },
+                    T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "mini-readonly", AllowedTools = ["read_file"] },
+                    T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                    T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-deep" }
+                }
             }
         };
 
@@ -36,7 +39,7 @@ public sealed class DynamicTurnRoutingConfigNormalizerTests
         Assert.Equal("tokenizer.json", resolved.Assets.TokenizerPath);
         Assert.Equal(384, resolved.Assets.EmbeddingDimensions);
         Assert.Equal("local-freeform", resolved.Tiers.T0.ModelProfileId);
-        Assert.Equal("legacy", resolved.Source);
+        Assert.Equal("direct", resolved.Source);
     }
 
     [Fact]
@@ -114,14 +117,14 @@ public sealed class DynamicTurnRoutingConfigNormalizerTests
     }
 
     [Fact]
-    public void Normalize_LegacyEmbeddingsDimensions_ArePreserved_WhenModernAssetsNotConfigured()
+    public void Normalize_DirectAssetsDimensions_ArePreserved()
     {
         var config = new DynamicTurnRoutingConfig
         {
             Enabled = true,
-            Embeddings = new DynamicTurnRoutingEmbeddingsConfig
+            Assets = new DynamicTurnRoutingAssetsConfig
             {
-                ModelPath = "embeddings.onnx",
+                EmbeddingModelPath = "embeddings.onnx",
                 TokenizerPath = "tokenizer.json",
                 Dimensions = 256
             }

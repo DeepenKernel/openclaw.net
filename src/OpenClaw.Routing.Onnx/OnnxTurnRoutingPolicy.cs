@@ -393,19 +393,18 @@ public sealed class OnnxTurnRoutingPolicy : ITurnRoutingPolicy, IDisposable
 
     private static ResolvedDynamicTurnRoutingConfig ToResolvedConfig(DynamicTurnRoutingConfig config)
     {
-        var hasPolicyTierMap = HasAnyConfiguredDynamicTurnRoutingTier(config.Policy.Tiers);
-        var tierMap = hasPolicyTierMap ? config.Policy.Tiers : config.Tiers;
+        var tierMap = config.Policy.Tiers;
 
         return new()
         {
             Enabled = config.Enabled,
-            Source = "legacy",
+            Source = "direct",
             Assets = new ResolvedDynamicTurnRoutingAssets
             {
-                ClassifierModelPath = config.Classifier.ModelPath,
-                EmbeddingModelPath = config.Embeddings.ModelPath,
-                TokenizerPath = config.Embeddings.TokenizerPath,
-                EmbeddingDimensions = config.Embeddings.Dimensions
+                ClassifierModelPath = config.Assets.ClassifierModelPath,
+                EmbeddingModelPath = config.Assets.EmbeddingModelPath,
+                TokenizerPath = config.Assets.TokenizerPath,
+                EmbeddingDimensions = config.Assets.Dimensions
             },
             Policy = new DynamicTurnRoutingPolicyConfig
             {

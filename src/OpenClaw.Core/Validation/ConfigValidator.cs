@@ -699,11 +699,7 @@ public static class ConfigValidator
         if (config.DynamicTurnRouting.Enabled)
         {
             var policy = config.DynamicTurnRouting.Policy;
-            var usePolicyTierMap = HasAnyConfiguredDynamicTurnRoutingTier(config.DynamicTurnRouting.Policy.Tiers);
-            var tierMap = usePolicyTierMap
-                ? config.DynamicTurnRouting.Policy.Tiers
-                : config.DynamicTurnRouting.Tiers;
-            var tierPathPrefix = usePolicyTierMap ? "Policy.Tiers" : "Tiers";
+            var tierMap = config.DynamicTurnRouting.Policy.Tiers;
 
             if (policy.MarginUpgradeThreshold is < 0f or > 1f)
                 errors.Add("DynamicTurnRouting.Policy.MarginUpgradeThreshold must be between 0 and 1.");
@@ -718,16 +714,13 @@ public static class ConfigValidator
                 errors.Add("DynamicTurnRouting.Policy.DeepConversationTurnIndexThreshold must be >= 0.");
 
             var classifierPath = FirstNonEmptyDynamicTurnRoutingValue(
-                config.DynamicTurnRouting.Assets.ClassifierModelPath,
-                config.DynamicTurnRouting.Classifier.ModelPath);
+                config.DynamicTurnRouting.Assets.ClassifierModelPath);
 
             var embeddingPath = FirstNonEmptyDynamicTurnRoutingValue(
-                config.DynamicTurnRouting.Assets.EmbeddingModelPath,
-                config.DynamicTurnRouting.Embeddings.ModelPath);
+                config.DynamicTurnRouting.Assets.EmbeddingModelPath);
 
             var tokenizerPath = FirstNonEmptyDynamicTurnRoutingValue(
-                config.DynamicTurnRouting.Assets.TokenizerPath,
-                config.DynamicTurnRouting.Embeddings.TokenizerPath);
+                config.DynamicTurnRouting.Assets.TokenizerPath);
 
             var usesBundlePath = !string.IsNullOrWhiteSpace(config.DynamicTurnRouting.BundlePath);
             if (!usesBundlePath)
@@ -739,10 +732,10 @@ public static class ConfigValidator
                     errors.Add("DynamicTurnRouting requires a tokenizer path when embeddings are configured.");
             }
 
-            ValidateDynamicTurnRoutingTier($"{tierPathPrefix}.T0", tierMap.T0, profileIds, errors);
-            ValidateDynamicTurnRoutingTier($"{tierPathPrefix}.T1", tierMap.T1, profileIds, errors);
-            ValidateDynamicTurnRoutingTier($"{tierPathPrefix}.T2", tierMap.T2, profileIds, errors);
-            ValidateDynamicTurnRoutingTier($"{tierPathPrefix}.T3", tierMap.T3, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T0", tierMap.T0, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T1", tierMap.T1, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T2", tierMap.T2, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T3", tierMap.T3, profileIds, errors);
         }
 
         foreach (var profile in config.Models.Profiles)

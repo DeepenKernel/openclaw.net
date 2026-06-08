@@ -129,7 +129,7 @@ public sealed class CoreServicesExtensionsTests
     }
 
     [Fact]
-    public void AddOpenClawCoreServices_NoBundlePath_PreservesLegacyEmbeddingDimensionsInResolvedConfig()
+    public void AddOpenClawCoreServices_NoBundlePath_UsesDirectAssetsInResolvedConfig()
     {
         var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempPath);
@@ -144,14 +144,11 @@ public sealed class CoreServicesExtensionsTests
                 DynamicTurnRouting = new DynamicTurnRoutingConfig
                 {
                     Enabled = true,
-                    Classifier = new DynamicTurnRoutingClassifierConfig
+                    Assets = new DynamicTurnRoutingAssetsConfig
                     {
-                        ModelPath = "legacy/classifier.onnx"
-                    },
-                    Embeddings = new DynamicTurnRoutingEmbeddingsConfig
-                    {
-                        ModelPath = "legacy/embeddings.onnx",
-                        TokenizerPath = "legacy/tokenizer.json",
+                        ClassifierModelPath = "direct/classifier.onnx",
+                        EmbeddingModelPath = "direct/embeddings.onnx",
+                        TokenizerPath = "direct/tokenizer.json",
                         Dimensions = 256
                     }
                 }
@@ -178,10 +175,10 @@ public sealed class CoreServicesExtensionsTests
             var resolved = provider.GetRequiredService<ResolvedDynamicTurnRoutingConfig>();
 
             Assert.True(resolved.Enabled);
-            Assert.Equal("legacy", resolved.Source);
-            Assert.Equal("legacy/classifier.onnx", resolved.Assets.ClassifierModelPath);
-            Assert.Equal("legacy/embeddings.onnx", resolved.Assets.EmbeddingModelPath);
-            Assert.Equal("legacy/tokenizer.json", resolved.Assets.TokenizerPath);
+            Assert.Equal("direct", resolved.Source);
+            Assert.Equal("direct/classifier.onnx", resolved.Assets.ClassifierModelPath);
+            Assert.Equal("direct/embeddings.onnx", resolved.Assets.EmbeddingModelPath);
+            Assert.Equal("direct/tokenizer.json", resolved.Assets.TokenizerPath);
             Assert.Equal(256, resolved.Assets.EmbeddingDimensions);
         }
         finally

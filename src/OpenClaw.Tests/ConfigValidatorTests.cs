@@ -38,22 +38,22 @@ public sealed class ConfigValidatorTests
             DynamicTurnRouting = new DynamicTurnRoutingConfig
             {
                 Enabled = true,
-                Classifier = new DynamicTurnRoutingClassifierConfig
+                Assets = new DynamicTurnRoutingAssetsConfig
                 {
-                    ModelPath = "models/routing/squilla_classifier.onnx"
-                },
-                Embeddings = new DynamicTurnRoutingEmbeddingsConfig
-                {
-                    ModelPath = "models/routing/minilm/model.onnx",
+                    ClassifierModelPath = "models/routing/squilla_classifier.onnx",
+                    EmbeddingModelPath = "models/routing/minilm/model.onnx",
                     TokenizerPath = "models/routing/minilm/tokenizer.json",
                     Dimensions = 384
                 },
-                Tiers = new DynamicTurnRoutingTierMap
+                Policy = new DynamicTurnRoutingPolicyConfig
                 {
-                    T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "local-freeform", DisableTools = true },
-                    T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "missing-mini" },
-                    T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" }
+                    Tiers = new DynamicTurnRoutingTierMap
+                    {
+                        T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "local-freeform", DisableTools = true },
+                        T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "missing-mini" },
+                        T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" }
+                    }
                 }
             }
         };
@@ -61,7 +61,7 @@ public sealed class ConfigValidatorTests
         var errors = ConfigValidator.Validate(config);
 
         Assert.Contains(errors, error =>
-            error.Contains("DynamicTurnRouting.Tiers.T1.ModelProfileId", StringComparison.Ordinal));
+            error.Contains("DynamicTurnRouting.Policy.Tiers.T1.ModelProfileId", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -91,21 +91,21 @@ public sealed class ConfigValidatorTests
             DynamicTurnRouting = new DynamicTurnRoutingConfig
             {
                 Enabled = true,
-                Classifier = new DynamicTurnRoutingClassifierConfig
+                Assets = new DynamicTurnRoutingAssetsConfig
                 {
-                    ModelPath = "models/routing/squilla_classifier.onnx"
-                },
-                Embeddings = new DynamicTurnRoutingEmbeddingsConfig
-                {
-                    ModelPath = "models/routing/minilm/model.onnx",
+                    ClassifierModelPath = "models/routing/squilla_classifier.onnx",
+                    EmbeddingModelPath = "models/routing/minilm/model.onnx",
                     TokenizerPath = ""
                 },
-                Tiers = new DynamicTurnRoutingTierMap
+                Policy = new DynamicTurnRoutingPolicyConfig
                 {
-                    T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" }
+                    Tiers = new DynamicTurnRoutingTierMap
+                    {
+                        T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" }
+                    }
                 }
             },
             Models = new ModelsConfig
@@ -162,7 +162,7 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
-    public void ConfigValidator_AllowsModernAssetsWithLegacyEmbeddingFallback()
+    public void ConfigValidator_AllowsModernAssetsWithPolicyTierMapping()
     {
         var config = new GatewayConfig
         {
@@ -178,20 +178,20 @@ public sealed class ConfigValidatorTests
                 Enabled = true,
                 Assets = new DynamicTurnRoutingAssetsConfig
                 {
-                    ClassifierModelPath = "override/classifier.onnx"
-                },
-                Embeddings = new DynamicTurnRoutingEmbeddingsConfig
-                {
-                    ModelPath = "legacy/embeddings.onnx",
-                    TokenizerPath = "legacy/tokenizer.json",
+                    ClassifierModelPath = "override/classifier.onnx",
+                    EmbeddingModelPath = "modern/embeddings.onnx",
+                    TokenizerPath = "modern/tokenizer.json",
                     Dimensions = 256
                 },
-                Tiers = new DynamicTurnRoutingTierMap
+                Policy = new DynamicTurnRoutingPolicyConfig
                 {
-                    T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
-                    T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" }
+                    Tiers = new DynamicTurnRoutingTierMap
+                    {
+                        T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" }
+                    }
                 }
             }
         };

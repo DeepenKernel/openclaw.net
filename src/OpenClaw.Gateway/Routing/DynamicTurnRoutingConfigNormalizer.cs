@@ -34,24 +34,19 @@ internal static class DynamicTurnRoutingConfigNormalizer
 
         var classifierPath = FirstNonEmpty(
             config.Assets.ClassifierModelPath,
-            bundle.Assets.ClassifierModelPath,
-            config.Classifier.ModelPath);
+            bundle.Assets.ClassifierModelPath);
 
         var embeddingPath = FirstNonEmpty(
             config.Assets.EmbeddingModelPath,
-            bundle.Assets.EmbeddingModelPath,
-            config.Embeddings.ModelPath);
+            bundle.Assets.EmbeddingModelPath);
 
         var tokenizerPath = FirstNonEmpty(
             config.Assets.TokenizerPath,
-            bundle.Assets.TokenizerPath,
-            config.Embeddings.TokenizerPath);
+            bundle.Assets.TokenizerPath);
 
         var tiers = HasAnyConfiguredTier(config.Policy.Tiers)
             ? config.Policy.Tiers
-            : HasAnyConfiguredTier(bundle.Policy.Tiers)
-                ? bundle.Policy.Tiers
-                : config.Tiers;
+            : bundle.Policy.Tiers;
 
         var hasBundleAssetsOverrides = HasConfiguredModernAssets(bundle.Assets);
 
@@ -59,7 +54,7 @@ internal static class DynamicTurnRoutingConfigNormalizer
             ? config.Assets.Dimensions
             : hasBundleAssetsOverrides
                 ? bundle.Assets.Dimensions
-                : config.Embeddings.Dimensions;
+                : DefaultAssets.Dimensions;
 
         var enableStickyTier = ChoosePolicyBool(
             config.Policy.EnableStickyTier,
@@ -99,7 +94,7 @@ internal static class DynamicTurnRoutingConfigNormalizer
         return new ResolvedDynamicTurnRoutingConfig
         {
             Enabled = config.Enabled,
-            Source = !string.IsNullOrWhiteSpace(config.BundlePath) ? "bundle" : "legacy",
+            Source = !string.IsNullOrWhiteSpace(config.BundlePath) ? "bundle" : "direct",
             Assets = new ResolvedDynamicTurnRoutingAssets
             {
                 ClassifierModelPath = classifierPath,

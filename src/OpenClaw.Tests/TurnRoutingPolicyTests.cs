@@ -16,13 +16,16 @@ public sealed class TurnRoutingPolicyTests
             new DynamicTurnRoutingConfig
             {
                 Enabled = true,
-                Classifier = new DynamicTurnRoutingClassifierConfig { ModelPath = "missing-classifier.onnx" },
-                Embeddings = new DynamicTurnRoutingEmbeddingsConfig
+                Assets = new DynamicTurnRoutingAssetsConfig
                 {
-                    ModelPath = "missing-embedding.onnx",
+                    ClassifierModelPath = "missing-classifier.onnx",
+                    EmbeddingModelPath = "missing-embedding.onnx",
                     TokenizerPath = "missing-tokenizer.json"
                 },
-                Tiers = BuildTierMap()
+                Policy = new DynamicTurnRoutingPolicyConfig
+                {
+                    Tiers = BuildTierMap()
+                }
             },
             NullLogger<OnnxTurnRoutingPolicy>.Instance);
 
@@ -280,19 +283,29 @@ public sealed class TurnRoutingPolicyTests
         };
 
     private static DynamicTurnRoutingConfig BuildRoutingConfig(DynamicTurnRoutingPolicyConfig? policy = null)
-        => new()
+    {
+        var effectivePolicy = policy ?? new DynamicTurnRoutingPolicyConfig();
+        if (string.IsNullOrWhiteSpace(effectivePolicy.Tiers.T0.ModelProfileId)
+            && string.IsNullOrWhiteSpace(effectivePolicy.Tiers.T1.ModelProfileId)
+            && string.IsNullOrWhiteSpace(effectivePolicy.Tiers.T2.ModelProfileId)
+            && string.IsNullOrWhiteSpace(effectivePolicy.Tiers.T3.ModelProfileId))
+        {
+            effectivePolicy.Tiers = BuildTierMap();
+        }
+
+        return new DynamicTurnRoutingConfig
         {
             Enabled = true,
-            Classifier = new DynamicTurnRoutingClassifierConfig { ModelPath = "classifier.onnx" },
-            Embeddings = new DynamicTurnRoutingEmbeddingsConfig
+            Assets = new DynamicTurnRoutingAssetsConfig
             {
-                ModelPath = "embeddings.onnx",
+                ClassifierModelPath = "classifier.onnx",
+                EmbeddingModelPath = "embeddings.onnx",
                 TokenizerPath = "tokenizer.json",
                 Dimensions = 384
             },
-            Policy = policy ?? new DynamicTurnRoutingPolicyConfig(),
-            Tiers = BuildTierMap()
+            Policy = effectivePolicy
         };
+    }
 
     private static ResolvedDynamicTurnRoutingConfig BuildResolvedRoutingConfig()
         => new()

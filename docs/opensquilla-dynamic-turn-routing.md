@@ -50,8 +50,8 @@ The implementation is intentionally split across three layers.
 `OpenClaw.Core` contains only configuration and validation contracts:
 
 - `DynamicTurnRoutingConfig`
-- `DynamicTurnRoutingClassifierConfig`
-- `DynamicTurnRoutingEmbeddingsConfig`
+- `DynamicTurnRoutingAssetsConfig`
+- `DynamicTurnRoutingPolicyConfig`
 - `DynamicTurnRoutingTierMap`
 - `DynamicTurnRoutingTierTarget`
 
@@ -84,12 +84,9 @@ This preserves the repository's boundary rules:
 
 The feature is configured under `OpenClaw:DynamicTurnRouting`.
 
-OpenClaw now supports two operator-facing routing inputs:
+OpenClaw supports modern routing input through `Assets` and `Policy`.
 
-- direct OpenClaw configuration through `Assets` and `Policy`
-- imported OpenSquilla-style bundle directories through `BundlePath`
-
-At startup, both shapes normalize into one internal resolved routing model before the ONNX policy is constructed.
+At startup, the gateway can optionally import OpenSquilla-style bundle directories through `BundlePath`, then normalize bundle values and direct overrides into one internal resolved routing model before constructing the ONNX policy.
 
 Preferred modern shape:
 
@@ -112,47 +109,7 @@ Preferred modern shape:
 }
 ```
 
-Legacy compatibility shape:
-
-```json
-{
-  "OpenClaw": {
-    "DynamicTurnRouting": {
-      "Enabled": true,
-      "Classifier": {
-        "ModelPath": "models/routing/squilla_classifier.onnx"
-      },
-      "Embeddings": {
-        "ModelPath": "models/routing/minilm/model.onnx",
-        "TokenizerPath": "models/routing/minilm/tokenizer.json",
-        "Dimensions": 384
-      },
-      "Tiers": {
-        "T0": {
-          "ModelProfileId": "local-freeform",
-          "DisableTools": true,
-          "PromptMode": "minimal"
-        },
-        "T1": {
-          "ModelProfileId": "mini-readonly",
-          "AllowedTools": ["read_file"],
-          "PromptMode": "compact"
-        },
-        "T2": {
-          "ModelProfileId": "frontier-tools",
-          "PromptMode": "full"
-        },
-        "T3": {
-          "ModelProfileId": "frontier-deep",
-          "PromptMode": "full"
-        }
-      }
-    }
-  }
-}
-```
-
-Legacy `Classifier` / `Embeddings` / `Tiers` settings remain supported as compatibility mode.
+`Policy.Tiers` is the only supported tier mapping location.
 
 ## Tier Mapping Model
 
@@ -171,7 +128,7 @@ The built-in prompt suffix behavior is intentionally small:
 
 ## Validation Rules
 
-Startup validation now checks both the legacy and modern routing shapes.
+Startup validation now checks the modern routing shape.
 
 The validator currently fails fast when:
 

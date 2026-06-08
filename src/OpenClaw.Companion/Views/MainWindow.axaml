@@ -4,7 +4,6 @@
         xmlns:models="using:OpenClaw.Companion.Models"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-		xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="820"
         x:Class="OpenClaw.Companion.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
@@ -233,67 +232,25 @@
 						<Border Classes="section-card">
 							<StackPanel Spacing="10">
 								<TextBlock Text="First Run Setup" Classes="section-title" />
-								<Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
-									<ComboBox Grid.Column="0" 
-											  HorizontalAlignment="Stretch" 
+								<Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+									<TextBlock Grid.Row="0" Grid.Column="0" Text="Provider" FontWeight="SemiBold" />
+									<TextBlock Grid.Row="0" Grid.Column="1" Text="Model" FontWeight="SemiBold" />
+									<TextBlock Grid.Row="0" Grid.Column="2" Text="Preset" FontWeight="SemiBold" />
+									<ComboBox Grid.Row="1" Grid.Column="0"
+											  HorizontalAlignment="Stretch"
+											  ItemsSource="{Binding SetupProviderOptions}"
 											  SelectedItem="{Binding SetupProvider}"
-											  IsEditable="True">
-										<sys:String>openai</sys:String>
-										<sys:String>anthropic</sys:String>
-										<sys:String>gemini</sys:String>
-										<sys:String>ollama</sys:String>
-										<sys:String>embedded</sys:String>
-									</ComboBox>
-									<ComboBox Grid.Column="1"
-                                        HorizontalAlignment="Stretch"
-                                        IsEditable="True"
-                                        SelectedItem="{Binding SetupModel}">
-
-										<sys:String>gpt-4o</sys:String>
-										<sys:String>gpt-4o-mini</sys:String>
-										<sys:String>o1-preview</sys:String>
-										<sys:String>o1-mini</sys:String>
-
-										<sys:String>claude-3-5-sonnet</sys:String>
-										<sys:String>claude-3-5-haiku</sys:String>
-										<sys:String>claude-3-opus</sys:String>
-
-										<sys:String>gemini-1.5-pro</sys:String>
-										<sys:String>gemini-1.5-flash</sys:String>
-
-										<sys:String>llama3.1</sys:String>
-										<sys:String>llama3.2</sys:String>
-										<sys:String>phi3</sys:String>
-										<sys:String>qwen2.5</sys:String>
-										<sys:String>gemma2</sys:String>
-										<sys:String>mistral</sys:String>
-									</ComboBox>
-									<ComboBox Grid.Column="2" 
-											  HorizontalAlignment="Stretch" 
+											  IsEditable="True" />
+									<ComboBox Grid.Row="1" Grid.Column="1"
+											  HorizontalAlignment="Stretch"
+											  ItemsSource="{Binding SetupModelOptions}"
+											  IsEditable="True"
+											  SelectedItem="{Binding SetupModel}" />
+									<ComboBox Grid.Row="1" Grid.Column="2"
+											  HorizontalAlignment="Stretch"
+											  ItemsSource="{Binding SetupModelPresetOptions}"
 											  SelectedItem="{Binding SetupModelPreset}"
-											  IsEditable="True">
-										<!-- Presets for Ollama (Local) -->
-										<sys:String>ollama-general</sys:String>
-										<sys:String>ollama-llama3-8b</sys:String>
-										<sys:String>ollama-phi3-mini</sys:String>
-										<sys:String>ollama-qwen2.5</sys:String>
-
-										<!-- Presets for Embedded (Local) -->
-										<sys:String>embedded-gemma-small-q4</sys:String>
-										<sys:String>embedded-phi3-mini-q4</sys:String>
-
-										<!-- Presets for OpenAI -->
-										<sys:String>openai-gpt-4o</sys:String>
-										<sys:String>openai-gpt-4o-mini</sys:String>
-
-										<!-- Presets for Anthropic -->
-										<sys:String>anthropic-claude-3.5-sonnet</sys:String>
-										<sys:String>anthropic-claude-3-haiku</sys:String>
-
-										<!-- Presets for Gemini -->
-										<sys:String>gemini-1.5-pro</sys:String>
-										<sys:String>gemini-1.5-flash</sys:String>
-									</ComboBox>
+											  IsEditable="True" />
 								</Grid>
 								<Grid ColumnDefinitions="2*,*" ColumnSpacing="10">
 									<TextBox Grid.Column="0" Text="{Binding SetupWorkspacePath}" Watermark="Workspace path" />

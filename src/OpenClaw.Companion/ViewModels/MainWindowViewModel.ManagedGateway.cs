@@ -60,6 +60,50 @@ public sealed partial class MainWindowViewModel
     [ObservableProperty]
     private string _embeddedLocalModelStatus = "Local model status not checked. Video uses sampled frames; LiteRT packages require an experimental adapter.";
 
+    public IReadOnlyList<string> SetupProviderOptions { get; } =
+    [
+        "openai",
+        "anthropic",
+        "gemini",
+        "ollama",
+        "embedded"
+    ];
+
+    public IReadOnlyList<string> SetupModelOptions { get; } =
+    [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o1-preview",
+        "o1-mini",
+        "claude-3-5-sonnet",
+        "claude-3-5-haiku",
+        "claude-3-opus",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "llama3.1",
+        "llama3.2",
+        "phi3",
+        "qwen2.5",
+        "gemma2",
+        "mistral"
+    ];
+
+    public IReadOnlyList<string> SetupModelPresetOptions { get; } =
+    [
+        "ollama-general",
+        "ollama-llama3-8b",
+        "ollama-phi3-mini",
+        "ollama-qwen2.5",
+        "embedded-gemma-small-q4",
+        "embedded-phi3-mini-q4",
+        "openai-gpt-4o",
+        "openai-gpt-4o-mini",
+        "anthropic-claude-3.5-sonnet",
+        "anthropic-claude-3-haiku",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash"
+    ];
+
     public bool CanRunLocalGatewaySetup => LocalGatewayCanRunSetup && !IsManagedGatewayBusy;
 
     public bool CanRunEmbeddedLocalModelCommands =>

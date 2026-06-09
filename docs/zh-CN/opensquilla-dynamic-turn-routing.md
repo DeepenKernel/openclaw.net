@@ -163,6 +163,18 @@ Routing CLI 详细命令见 [../cli/routing.md](../cli/routing.md)。
 
 但这仍然只是一个实验性路由能力，不是已经调优完成的生产级分类器。运行时接线是稳定的，但提示词特征和阈值默认值都刻意保持保守，不能据此宣称已经达到 OpenSquilla 等价精度。
 
+## Dashboard 入口
+
+仪表板现在提供了一个只读的动态路由页面：[src/OpenClaw.Dashboard/Pages/DynamicRouting.razor](../src/OpenClaw.Dashboard/Pages/DynamicRouting.razor)，并且已经通过 [src/OpenClaw.Dashboard/Layout/NavMenu.razor](../src/OpenClaw.Dashboard/Layout/NavMenu.razor) 加入管理侧导航。
+
+这个页面直接展示 `admin/providers` 的实时视图，包括：
+
+- 模型档位与默认档位选择
+- 路由健康状态和每条路由的 circuit state
+- 策略规则清单与 token 限额约束
+
+它是只读的可观测层，不是额外的一套路由编辑器，也不是独立的新运行时。
+
 当前仍应判定为实验态，主要依据：
 
 - 现有质量基线距离常见生产分类器门槛仍有差距。可参考 [turn-routing-quality.grid-report.json](../testing/turn-routing-quality.grid-report.json)（当前网格搜索结果里 `best.MacroF1` 约为 `0.65`）。

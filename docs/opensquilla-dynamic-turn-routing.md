@@ -178,6 +178,18 @@ The feature support today is best understood as:
 
 This is still an experimental routing capability, not a tuned production classifier. The runtime wiring is stable, but the prompt features and threshold defaults are intentionally conservative and are not claimed to match OpenSquilla-equivalent accuracy.
 
+## Dashboard Surface
+
+The dashboard now exposes a read-only routing view at [src/OpenClaw.Dashboard/Pages/DynamicRouting.razor](../src/OpenClaw.Dashboard/Pages/DynamicRouting.razor) and adds it to the admin navigation through [src/OpenClaw.Dashboard/Layout/NavMenu.razor](../src/OpenClaw.Dashboard/Layout/NavMenu.razor).
+
+That page shows the live `admin/providers` view of:
+
+- model profiles and default profile selection
+- route health and per-route circuit state
+- policy rule inventory and token-limit constraints
+
+It is intentionally read-only. The dashboard is a visibility layer over the existing routing contract, not a second routing editor or a separate runtime stack.
+
 Why this remains experimental today:
 
 - The current quality baseline is still below typical production classifier expectations. See [turn-routing-quality.grid-report.json](testing/turn-routing-quality.grid-report.json) (`best.MacroF1` is around `0.65` in the current grid output).

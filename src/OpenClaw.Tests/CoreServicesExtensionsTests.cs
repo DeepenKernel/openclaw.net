@@ -68,8 +68,8 @@ public sealed class CoreServicesExtensionsTests
             Assert.True(resolved.Enabled);
             Assert.Equal("bundle", resolved.Source);
             Assert.Equal("override/classifier.onnx", resolved.Assets.ClassifierModelPath);
-            Assert.Equal(Path.Combine(bundlePath, "embeddings.onnx"), resolved.Assets.EmbeddingModelPath);
-            Assert.Equal(Path.Combine(bundlePath, "tokenizer.json"), resolved.Assets.TokenizerPath);
+            Assert.Equal(Path.Join(bundlePath, "embeddings.onnx"), resolved.Assets.EmbeddingModelPath);
+            Assert.Equal(Path.Join(bundlePath, "tokenizer.json"), resolved.Assets.TokenizerPath);
             Assert.Equal(384, resolved.Assets.EmbeddingDimensions);
             Assert.False(resolved.Policy.EnableStickyTier);
             Assert.True(resolved.Policy.EnableMarginUpgrade);

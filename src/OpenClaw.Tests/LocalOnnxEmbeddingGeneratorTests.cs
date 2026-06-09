@@ -195,7 +195,7 @@ public sealed class LocalOnnxEmbeddingGeneratorTests
 
     private static TemporaryFile CreateTokenizerJson(string content)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"openclaw-tokenizer-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"openclaw-tokenizer-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, content);
         return new TemporaryFile(path);
     }

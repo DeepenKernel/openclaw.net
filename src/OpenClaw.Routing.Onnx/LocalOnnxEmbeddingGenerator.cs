@@ -425,23 +425,26 @@ internal sealed class OnnxEmbeddingModelRunner : IEmbeddingModelRunner
         var seenOutputs = new List<string>();
 
         // First pass: prefer direct embeddings (rank 1 or 2) - no pooling needed.
-        foreach (var result in results)
-        {
-            seenOutputs.Add(DescribeOutput(result));
-
-            if (TryGetDirectEmbedding(result, out var directEmbedding))
-                return directEmbedding;
-        }
+        var directEmbedding = results
+            .Select(result =>
+            {
+                seenOutputs.Add(DescribeOutput(result));
+                return TryGetDirectEmbedding(result, out var embedding) ? embedding : null;
+            })
+            .FirstOrDefault(static embedding => embedding is not null);
+        if (directEmbedding is not null)
+            return directEmbedding;
 
         // Second pass: fall back to mean-pooling over a rank-3 hidden-state tensor.
-        foreach (var result in results.Where(static result =>
-            result.Value is Tensor<float> tensor &&
-            tensor.Rank == 3 &&
-            tensor.Dimensions[0] == 1))
-        {
-            if (TryGetPooledEmbedding(result, attentionMask, out var pooledEmbedding))
-                return pooledEmbedding;
-        }
+        var pooledEmbedding = results
+            .Where(static result =>
+                result.Value is Tensor<float> tensor &&
+                tensor.Rank == 3 &&
+                tensor.Dimensions[0] == 1)
+            .Select(result => TryGetPooledEmbedding(result, attentionMask, out var embedding) ? embedding : null)
+            .FirstOrDefault(static embedding => embedding is not null);
+        if (pooledEmbedding is not null)
+            return pooledEmbedding;
 
         throw new InvalidOperationException($"Embedding model '{_modelPath}' did not return a supported output tensor. Observed outputs: {string.Join("; ", seenOutputs)}.");
     }

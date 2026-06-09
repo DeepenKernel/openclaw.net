@@ -78,10 +78,10 @@ public sealed class TurnRoutingPolicyTests
                 Enabled = true,
                 Assets = new DynamicTurnRoutingAssetsConfig
                 {
-                    ClassifierModelPath = Path.Combine(bundlePath, "classifier.onnx"),
-                    EmbeddingModelPath = Path.Combine(bundlePath, "embeddings.onnx"),
-                    TokenizerPath = Path.Combine(bundlePath, "tokenizer.json"),
-                    RuntimeConfigPath = Path.Combine(bundlePath, "runtime-config.json"),
+                    ClassifierModelPath = Path.Join(bundlePath, "classifier.onnx"),
+                    EmbeddingModelPath = Path.Join(bundlePath, "embeddings.onnx"),
+                    TokenizerPath = Path.Join(bundlePath, "tokenizer.json"),
+                    RuntimeConfigPath = Path.Join(bundlePath, "runtime-config.json"),
                     Dimensions = 512
                 },
                 Policy = new DynamicTurnRoutingPolicyConfig
@@ -123,10 +123,10 @@ public sealed class TurnRoutingPolicyTests
         var decision = await policy.ResolveAsync(BuildRequest("Read README and summarize the key modules."), CancellationToken.None);
 
         Assert.Equal("bundle", resolved.Source);
-        Assert.Equal(Path.Combine(bundlePath, "classifier.onnx"), resolved.Assets.ClassifierModelPath);
-        Assert.Equal(Path.Combine(bundlePath, "embeddings.onnx"), resolved.Assets.EmbeddingModelPath);
-        Assert.Equal(Path.Combine(bundlePath, "tokenizer.json"), resolved.Assets.TokenizerPath);
-        Assert.Equal(Path.Combine(bundlePath, "runtime-config.json"), resolved.Assets.RuntimeConfigPath);
+        Assert.Equal(Path.Join(bundlePath, "classifier.onnx"), resolved.Assets.ClassifierModelPath);
+        Assert.Equal(Path.Join(bundlePath, "embeddings.onnx"), resolved.Assets.EmbeddingModelPath);
+        Assert.Equal(Path.Join(bundlePath, "tokenizer.json"), resolved.Assets.TokenizerPath);
+        Assert.Equal(Path.Join(bundlePath, "runtime-config.json"), resolved.Assets.RuntimeConfigPath);
         Assert.Equal(512, resolved.Assets.EmbeddingDimensions);
         Assert.True(
             string.Equals(decision.Tier, "T0", StringComparison.Ordinal)

@@ -49,7 +49,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafSessionStateStore_RoundTripsSerializedSession_WhenHistoryMatches()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -86,7 +86,7 @@ public sealed class MafAdapterTests
             Options.Create(new MafOptions()),
             NullLoggerFactory.Instance);
 
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-delegation-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-delegation-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -162,7 +162,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafAgentRuntime_RunAsync_FollowUpRestoresSidecarAgainstPriorCompletedHistory()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -206,7 +206,7 @@ public sealed class MafAdapterTests
                 };
             });
 
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -230,7 +230,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafAgentRuntime_RunStreamingAsync_FollowUpRestoresSidecarAgainstPriorCompletedHistory()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -271,7 +271,7 @@ public sealed class MafAdapterTests
                 Reason = "streaming_route"
             });
 
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-early-break-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-routing-early-break-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -333,7 +333,7 @@ public sealed class MafAdapterTests
     {
         var services = new ServiceCollection().BuildServiceProvider();
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-tool-filter-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-tool-filter-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -414,7 +414,7 @@ public sealed class MafAdapterTests
             .AddSingleton<IToolPresetResolver>(new TestToolPresetResolver(["echo_tool"]))
             .BuildServiceProvider();
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-preset-filter-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-preset-filter-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -509,7 +509,7 @@ public sealed class MafAdapterTests
             .AddSingleton(routing)
             .BuildServiceProvider();
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-routing-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -624,7 +624,7 @@ public sealed class MafAdapterTests
             NullLogger<OnnxTurnRoutingPolicy>.Instance);
 
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-onnx-fallback-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-onnx-fallback-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -684,7 +684,7 @@ public sealed class MafAdapterTests
             NullLogger<OnnxTurnRoutingPolicy>.Instance);
 
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-onnx-parity-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-onnx-parity-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -731,7 +731,7 @@ public sealed class MafAdapterTests
                 Reason = "setup_failed_after_routing"
             });
 
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-setup-failure-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-routing-setup-failure-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -769,7 +769,7 @@ public sealed class MafAdapterTests
                 Reason = "setup_failed_after_routing"
             });
 
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-setup-failure-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-routing-setup-failure-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -812,7 +812,7 @@ public sealed class MafAdapterTests
             });
 
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-disable-tools-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-disable-tools-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -844,7 +844,7 @@ public sealed class MafAdapterTests
             .Returns(new TurnRoutingDecision());
 
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-default-routing-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-default-routing-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -889,7 +889,7 @@ public sealed class MafAdapterTests
                 };
             });
 
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sticky-tier-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-sticky-tier-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -927,7 +927,7 @@ public sealed class MafAdapterTests
             .AddSingleton(routing)
             .BuildServiceProvider();
         var executionService = new CapturingLlmExecutionService();
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-routing-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -1009,7 +1009,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafSessionStateStore_HistoryHashMismatch_RebuildsFreshSession()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -1042,7 +1042,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafSessionStateStore_CorruptedSidecar_RebuildsFreshSession()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -1070,7 +1070,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafSessionStateStore_SaveFailure_CleansUpTempFile()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try
@@ -1144,7 +1144,7 @@ public sealed class MafAdapterTests
     [Fact]
     public async Task MafSessionStateStore_HistoryHash_RemainsStableAcrossFileSessionReload()
     {
-        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(storagePath);
 
         try

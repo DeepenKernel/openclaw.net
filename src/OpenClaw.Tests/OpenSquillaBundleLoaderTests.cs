@@ -13,11 +13,11 @@ public sealed class OpenSquillaBundleLoaderTests
         try
         {
             File.WriteAllText(
-                Path.Combine(bundlePath, "runtime-config.json"),
+                Path.Join(bundlePath, "runtime-config.json"),
                 "{\"routing\":{\"embeddingDimensions\":512}}"
             );
             File.WriteAllText(
-                Path.Combine(bundlePath, "manifest.json"),
+                Path.Join(bundlePath, "manifest.json"),
                 "{\"embedding\":{\"dimensions\":256}}"
             );
 
@@ -40,7 +40,7 @@ public sealed class OpenSquillaBundleLoaderTests
         try
         {
             File.WriteAllText(
-                Path.Combine(bundlePath, "manifest.json"),
+                Path.Join(bundlePath, "manifest.json"),
                 "{\"metadata\":{\"embedding_size\":448}}"
             );
 
@@ -80,11 +80,11 @@ public sealed class OpenSquillaBundleLoaderTests
 
         try
         {
-            Directory.CreateDirectory(Path.Combine(bundlePath, "models"));
-            Directory.CreateDirectory(Path.Combine(bundlePath, "tokenizers"));
-            Directory.CreateDirectory(Path.Combine(bundlePath, "config"));
+            Directory.CreateDirectory(Path.Join(bundlePath, "models"));
+            Directory.CreateDirectory(Path.Join(bundlePath, "tokenizers"));
+            Directory.CreateDirectory(Path.Join(bundlePath, "config"));
             File.WriteAllText(
-                Path.Combine(bundlePath, "manifest.json"),
+                Path.Join(bundlePath, "manifest.json"),
                 """
                 {
                   "assets": {
@@ -99,10 +99,10 @@ public sealed class OpenSquillaBundleLoaderTests
             var loader = new OpenSquillaBundleLoader();
             var bundle = loader.Load(bundlePath);
 
-            Assert.Equal(Path.Combine(bundlePath, "models", "router-classifier.onnx"), bundle.Assets.ClassifierModelPath);
-            Assert.Equal(Path.Combine(bundlePath, "models", "router-embeddings.onnx"), bundle.Assets.EmbeddingModelPath);
-            Assert.Equal(Path.Combine(bundlePath, "tokenizers", "router-tokenizer.json"), bundle.Assets.TokenizerPath);
-            Assert.Equal(Path.Combine(bundlePath, "config", "runtime.json"), bundle.Assets.RuntimeConfigPath);
+            Assert.Equal(Path.Join(bundlePath, "models", "router-classifier.onnx"), bundle.Assets.ClassifierModelPath);
+            Assert.Equal(Path.Join(bundlePath, "models", "router-embeddings.onnx"), bundle.Assets.EmbeddingModelPath);
+            Assert.Equal(Path.Join(bundlePath, "tokenizers", "router-tokenizer.json"), bundle.Assets.TokenizerPath);
+            Assert.Equal(Path.Join(bundlePath, "config", "runtime.json"), bundle.Assets.RuntimeConfigPath);
         }
         finally
         {
@@ -114,9 +114,9 @@ public sealed class OpenSquillaBundleLoaderTests
     {
         var bundlePath = Path.Combine(Path.GetTempPath(), "openclaw-bundle-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(bundlePath);
-        File.WriteAllText(Path.Combine(bundlePath, "classifier.onnx"), string.Empty);
-        File.WriteAllText(Path.Combine(bundlePath, "embeddings.onnx"), string.Empty);
-        File.WriteAllText(Path.Combine(bundlePath, "tokenizer.json"), "{}");
+        File.WriteAllText(Path.Join(bundlePath, "classifier.onnx"), string.Empty);
+        File.WriteAllText(Path.Join(bundlePath, "embeddings.onnx"), string.Empty);
+        File.WriteAllText(Path.Join(bundlePath, "tokenizer.json"), "{}");
         return bundlePath;
     }
 }

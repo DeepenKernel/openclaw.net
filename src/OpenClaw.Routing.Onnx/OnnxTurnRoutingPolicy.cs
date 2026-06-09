@@ -42,11 +42,26 @@ public sealed class OnnxTurnRoutingPolicy : ITurnRoutingPolicy, IDisposable
         {
             try
             {
-                _embeddingGenerator = new LocalOnnxEmbeddingGenerator(
+                var embeddingGenerator = new LocalOnnxEmbeddingGenerator(
                     config.Assets.EmbeddingModelPath,
                     config.Assets.TokenizerPath,
                     config.Assets.EmbeddingDimensions);
-                _tierClassifier = new OnnxTierClassifier(config.Assets.ClassifierModelPath);
+                var tierClassifier = new OnnxTierClassifier(config.Assets.ClassifierModelPath);
+
+                if (!IsClassifierFeatureCountCompatible(tierClassifier.ExpectedFeatureCount))
+                {
+                    logger.LogWarning(
+                        "ONNX routing classifier input dimension mismatch during initialization. Model expects {ExpectedFeatureCount} features but runtime extractor produces {ActualFeatureCount}. Dynamic routing will fall back to T2.",
+                        tierClassifier.ExpectedFeatureCount,
+                        PromptFeatureExtractor.FeatureVectorDimensions);
+                    _classifierAvailable = false;
+                    embeddingGenerator.Dispose();
+                    tierClassifier.Dispose();
+                    return;
+                }
+
+                _embeddingGenerator = embeddingGenerator;
+                _tierClassifier = tierClassifier;
             }
             catch (Exception ex)
             {
@@ -276,6 +291,13 @@ public sealed class OnnxTurnRoutingPolicy : ITurnRoutingPolicy, IDisposable
             reasons.Add("sticky_tier");
         }
 
+        var greetingTier = ApplyGreetingCap(tier, input, signals);
+        if (greetingTier != tier)
+        {
+            tier = greetingTier;
+            reasons.Add("greeting_cap");
+        }
+
         return new RoutingPostProcessResult(tier, string.Join('+', reasons));
     }
 
@@ -303,6 +325,9 @@ public sealed class OnnxTurnRoutingPolicy : ITurnRoutingPolicy, IDisposable
         oneHot[index] = 1f;
         return oneHot;
     }
+
+    internal static bool IsClassifierFeatureCountCompatible(int? expectedFeatureCount)
+        => !expectedFeatureCount.HasValue || expectedFeatureCount.Value == PromptFeatureExtractor.FeatureVectorDimensions;
 
     private static float ComputeMargin(IReadOnlyList<float> probabilities)
     {
@@ -359,6 +384,44 @@ public sealed class OnnxTurnRoutingPolicy : ITurnRoutingPolicy, IDisposable
         };
 
         return previous > tier ? previous : tier;
+    }
+
+    private static int ApplyGreetingCap(int tier, RoutingFeatureInput input, RoutingSignals signals)
+    {
+        if (tier <= 1)
+            return tier;
+
+        if (signals.HighRisk
+            || signals.Debug
+            || signals.RepoArch
+            || signals.LongContext
+            || signals.HasCodeBlock
+            || signals.HasFileReference
+            || signals.HasUrl
+            || signals.DeepConversation)
+            return tier;
+
+        return IsShortGreeting(input.CurrentUserText) ? 1 : tier;
+    }
+
+    private static bool IsShortGreeting(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var normalized = text.Trim().TrimEnd('!', '?', '.', ',', '，', '。', '！', '？').Trim();
+        if (normalized.Length is < 1 or > 24)
+            return false;
+
+        return normalized.Equals("hi", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("hello", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("hey", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("yo", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("你好", StringComparison.Ordinal)
+            || normalized.Equals("您好", StringComparison.Ordinal)
+            || normalized.Equals("嗨", StringComparison.Ordinal)
+            || normalized.Equals("在吗", StringComparison.Ordinal)
+            || normalized.Equals("在嗎", StringComparison.Ordinal);
     }
 
     private static float[] Softmax(IReadOnlyList<float> values)
@@ -456,6 +519,8 @@ public sealed class OnnxTurnRoutingPolicy : ITurnRoutingPolicy, IDisposable
         private readonly string _inputName;
         private readonly int? _expectedFeatureCount;
         private int _disposed;
+
+        public int? ExpectedFeatureCount => _expectedFeatureCount;
 
         public OnnxTierClassifier(string modelPath)
         {

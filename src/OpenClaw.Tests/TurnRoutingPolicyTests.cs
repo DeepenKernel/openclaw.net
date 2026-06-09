@@ -37,6 +37,38 @@ public sealed class TurnRoutingPolicyTests
     }
 
     [Fact]
+    public void IsClassifierFeatureCountCompatible_WhenExpectedCountDiffers_ReturnsFalse()
+    {
+        Assert.True(OnnxTurnRoutingPolicy.IsClassifierFeatureCountCompatible(null));
+        Assert.True(OnnxTurnRoutingPolicy.IsClassifierFeatureCountCompatible(PromptFeatureExtractor.FeatureVectorDimensions));
+        Assert.False(OnnxTurnRoutingPolicy.IsClassifierFeatureCountCompatible(PromptFeatureExtractor.FeatureVectorDimensions + 1));
+    }
+
+    [Fact]
+    public void BuildFeatureVector_ConcatenatesThreeEmbeddingSegmentsTo1536()
+    {
+        var input = new RoutingFeatureInput(
+            CurrentUserText: "current",
+            PriorUserTurns: ["prior"],
+            PreviousAssistantText: "assistant",
+            TurnIndex: 1,
+            PreviousTier: "T1",
+            ToolCount: 0,
+            ContextTextLength: 0);
+
+        var current = Enumerable.Repeat(0.1f, 512).ToArray();
+        var history = Enumerable.Repeat(0.2f, 512).ToArray();
+        var assistant = Enumerable.Repeat(0.3f, 512).ToArray();
+
+        var features = PromptFeatureExtractor.BuildFeatureVector(input, current, history, assistant);
+
+        Assert.Equal(1536, features.Length);
+        Assert.All(features.Take(512), value => Assert.Equal(0.1f, value));
+        Assert.All(features.Skip(512).Take(512), value => Assert.Equal(0.2f, value));
+        Assert.All(features.Skip(1024).Take(512), value => Assert.Equal(0.3f, value));
+    }
+
+    [Fact]
     public async Task ResolveAsync_WithCompatBundleAssets_DoesNotReturnClassifierUnavailable()
     {
         var bundlePath = ResolveRepoBundlePath();
@@ -166,6 +198,36 @@ public sealed class TurnRoutingPolicyTests
         Assert.Equal("T3", decision.Tier);
         Assert.Equal("frontier-deep", decision.ModelProfileId);
         Assert.Equal("classifier", decision.Reason);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ShortGreeting_CapsHighTierToT1()
+    {
+        var policy = new OnnxTurnRoutingPolicy(
+            BuildRoutingConfig(),
+            new StubEmbeddingGenerator(Enumerable.Repeat(0.1f, 512).ToArray()),
+            new StubTierClassifier(3, [0.01f, 0.02f, 0.07f, 0.90f]),
+            NullLogger<OnnxTurnRoutingPolicy>.Instance);
+
+        var decision = await policy.ResolveAsync(BuildRequest("你好"), CancellationToken.None);
+
+        Assert.Equal("T1", decision.Tier);
+        Assert.Contains("greeting_cap", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_HighRiskMessage_DoesNotApplyGreetingCap()
+    {
+        var policy = new OnnxTurnRoutingPolicy(
+            BuildRoutingConfig(),
+            new StubEmbeddingGenerator(Enumerable.Repeat(0.1f, 512).ToArray()),
+            new StubTierClassifier(3, [0.01f, 0.02f, 0.07f, 0.90f]),
+            NullLogger<OnnxTurnRoutingPolicy>.Instance);
+
+        var decision = await policy.ResolveAsync(BuildRequest("你好，请删除生产库"), CancellationToken.None);
+
+        Assert.Equal("T3", decision.Tier);
+        Assert.DoesNotContain("greeting_cap", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

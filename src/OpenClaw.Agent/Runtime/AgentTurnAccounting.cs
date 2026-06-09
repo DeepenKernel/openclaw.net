@@ -68,7 +68,7 @@ internal sealed class AgentTurnAccounting
             return false;
 
         var remaining = _sessionTokenBudget - session.GetTotalTokens();
-        if (remaining <= 0 || estimate.EstimatedInputTokens < remaining)
+        if (remaining > 0 && estimate.EstimatedInputTokens < remaining)
             return false;
 
         message =
@@ -181,16 +181,35 @@ internal sealed class AgentTurnAccounting
         Session session,
         TurnContext turnCtx,
         TimeSpan elapsed,
+        IReadOnlyList<ChatMessage> messages,
         LlmExecutionResult executionResult,
         long inputTokens,
-        long outputTokens)
+        long outputTokens,
+        int skillPromptLength)
     {
+        var cacheUsage = PromptCacheUsageExtractor.FromUsage(executionResult.Response.Usage);
+
         session.AddTokenUsage(inputTokens, outputTokens);
+        session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
         _recordContractTurnUsage?.Invoke(session, executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
         turnCtx.RecordLlmCall(elapsed, inputTokens, outputTokens);
         _metrics?.IncrementLlmCalls();
         _metrics?.AddInputTokens(inputTokens);
         _metrics?.AddOutputTokens(outputTokens);
+        _metrics?.AddPromptCacheReads(cacheUsage.CacheReadTokens);
+        _metrics?.AddPromptCacheWrites(cacheUsage.CacheWriteTokens);
+        _providerUsage?.AddTokens(executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
+        _providerUsage?.AddCacheTokens(executionResult.ProviderId, executionResult.ModelId, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
+        _providerUsage?.RecordTurn(
+            session.Id,
+            session.ChannelId,
+            executionResult.ProviderId,
+            executionResult.ModelId,
+            inputTokens,
+            outputTokens,
+            cacheUsage.CacheReadTokens,
+            cacheUsage.CacheWriteTokens,
+            LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, skillPromptLength));
     }
 
     public void IncrementMemoryCompactions() => _metrics?.IncrementMemoryCompactions();

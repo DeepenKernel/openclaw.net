@@ -40,6 +40,17 @@ internal sealed class AgentPromptContextAssembler
         ILogger? logger,
         string? memoryRecallPrefix)
     {
+        if (recall?.Enabled == true && memory is not IMemoryNoteSearch)
+            throw new ArgumentException("Enabled _recall requires memory to implement IMemoryNoteSearch.", nameof(memory));
+        if (profilesConfig is { Enabled: true, InjectRecall: true } && profileStore is null)
+            throw new ArgumentException("Enabled profilesConfig profile recall requires _profileStore.", nameof(profileStore));
+        if (fractalMemory is { Enabled: true } &&
+            string.Equals(fractalMemory.AutoContextMode, "auto", StringComparison.OrdinalIgnoreCase) &&
+            contextBudgetPlanner is null)
+        {
+            throw new ArgumentException("Enabled _fractalMemory auto context requires _contextBudgetPlanner.", nameof(contextBudgetPlanner));
+        }
+
         _memory = memory;
         _requireToolApproval = requireToolApproval;
         _recall = recall;
@@ -89,15 +100,17 @@ internal sealed class AgentPromptContextAssembler
     {
         lock (_skillGate)
         {
+            var skillSnapshot = skills.ToArray();
+
             // Progressive disclosure: only the metadata index lives in the system prompt.
             // The full SKILL.md body for any single skill is fetched on demand via the
             // `load_skill` tool, which reads from LoadedSkills (this same snapshot).
-            var skillSection = SkillPromptBuilder.BuildIndex(skills, skillsInstructionPrompt);
+            var skillSection = SkillPromptBuilder.BuildIndex(skillSnapshot, skillsInstructionPrompt);
             var basePrompt = AgentSystemPromptBuilder.BuildBaseSystemPrompt(_requireToolApproval);
             _skillPromptLength = skillSection.Length;
             _systemPrompt = string.IsNullOrEmpty(skillSection) ? basePrompt : basePrompt + "\n" + skillSection;
-            _loadedSkills = skills;
-            _loadedSkillNames = skills
+            _loadedSkills = skillSnapshot;
+            _loadedSkillNames = skillSnapshot
                 .Select(skill => skill.Name)
                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -224,7 +237,27 @@ internal sealed class AgentPromptContextAssembler
         {
             throw;
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
+        {
+            _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
+            return false;
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
+            return false;
+        }
+        catch (IOException ex)
+        {
+            _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
+            return false;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
+            return false;
+        }
+        catch (TimeoutException ex)
         {
             _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
             return false;
@@ -332,7 +365,27 @@ internal sealed class AgentPromptContextAssembler
 
             messages.Insert(Math.Min(2, messages.Count), new ChatMessage(ChatRole.User, text));
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
+        }
+        catch (IOException ex)
+        {
+            _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
+        }
+        catch (TimeoutException ex)
         {
             _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
         }

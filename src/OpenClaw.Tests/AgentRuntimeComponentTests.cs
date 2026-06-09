@@ -7,6 +7,7 @@ using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
+using OpenClaw.Core.Skills;
 using Xunit;
 
 namespace OpenClaw.Tests;
@@ -74,6 +75,90 @@ public sealed class AgentRuntimeComponentTests
             message.Contents.OfType<FunctionResultContent>().Any(content =>
                 content.CallId == "call_resume_1" &&
                 string.Equals(content.Result?.ToString(), "tool result", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void PromptContextAssembler_ApplySkills_PublishesSnapshot()
+    {
+        var assembler = new AgentPromptContextAssembler(
+            Substitute.For<IMemoryStore>(),
+            requireToolApproval: false,
+            recall: null,
+            profileStore: null,
+            profilesConfig: null,
+            contextBudgetPlanner: null,
+            fractalMemory: null,
+            metrics: null,
+            logger: null,
+            memoryRecallPrefix: null);
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "alpha",
+                Description = "Alpha skill",
+                Instructions = "Use alpha.",
+                Location = "/tmp/alpha"
+            }
+        };
+
+        assembler.ApplySkills(skills, skillsInstructionPrompt: null);
+        skills.Add(new SkillDefinition
+        {
+            Name = "beta",
+            Description = "Beta skill",
+            Instructions = "Use beta.",
+            Location = "/tmp/beta"
+        });
+
+        var loaded = Assert.Single(assembler.LoadedSkills);
+        Assert.Equal("alpha", loaded.Name);
+        Assert.Equal(["alpha"], assembler.LoadedSkillNames);
+    }
+
+    [Fact]
+    public void PromptContextAssembler_Constructor_FailsFastForEnabledUnsupportedSources()
+    {
+        var memory = Substitute.For<IMemoryStore>();
+
+        var recallError = Assert.Throws<ArgumentException>(() => new AgentPromptContextAssembler(
+            memory,
+            requireToolApproval: false,
+            recall: new MemoryRecallConfig { Enabled = true },
+            profileStore: null,
+            profilesConfig: null,
+            contextBudgetPlanner: null,
+            fractalMemory: null,
+            metrics: null,
+            logger: null,
+            memoryRecallPrefix: null));
+        Assert.Contains("IMemoryNoteSearch", recallError.Message, StringComparison.Ordinal);
+
+        var profileError = Assert.Throws<ArgumentException>(() => new AgentPromptContextAssembler(
+            memory,
+            requireToolApproval: false,
+            recall: null,
+            profileStore: null,
+            profilesConfig: new ProfilesConfig { Enabled = true, InjectRecall = true },
+            contextBudgetPlanner: null,
+            fractalMemory: null,
+            metrics: null,
+            logger: null,
+            memoryRecallPrefix: null));
+        Assert.Contains("_profileStore", profileError.Message, StringComparison.Ordinal);
+
+        var fractalError = Assert.Throws<ArgumentException>(() => new AgentPromptContextAssembler(
+            memory,
+            requireToolApproval: false,
+            recall: null,
+            profileStore: null,
+            profilesConfig: null,
+            contextBudgetPlanner: null,
+            fractalMemory: new FractalMemoryConfig { Enabled = true, AutoContextMode = "auto" },
+            metrics: null,
+            logger: null,
+            memoryRecallPrefix: null));
+        Assert.Contains("_contextBudgetPlanner", fractalError.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -158,6 +243,33 @@ public sealed class AgentRuntimeComponentTests
     }
 
     [Fact]
+    public async Task PromptContextAssembler_ProfileRecall_PropagatesCancellation()
+    {
+        var profileStore = Substitute.For<IUserProfileStore>();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        profileStore.GetProfileAsync("websocket:user", cts.Token)
+            .Returns<ValueTask<UserProfile?>>(_ => throw new OperationCanceledException(cts.Token));
+        var assembler = new AgentPromptContextAssembler(
+            Substitute.For<IMemoryStore>(),
+            requireToolApproval: false,
+            recall: null,
+            profileStore,
+            profilesConfig: new ProfilesConfig { Enabled = true, InjectRecall = true },
+            contextBudgetPlanner: null,
+            fractalMemory: null,
+            metrics: null,
+            logger: null,
+            memoryRecallPrefix: null);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await assembler.TryInjectProfileRecallAsync(
+                [new ChatMessage(ChatRole.System, "system")],
+                new Session { Id = "sess-cancel", ChannelId = "websocket", SenderId = "user" },
+                cts.Token));
+    }
+
+    [Fact]
     public async Task CheckpointManager_PersistToolBatch_RetriesTransientSaveFailure()
     {
         var memory = new RetryCheckpointMemoryStore();
@@ -189,6 +301,33 @@ public sealed class AgentRuntimeComponentTests
     }
 
     [Fact]
+    public async Task CheckpointManager_PersistToolBatch_ThrowsAfterExhaustedRetries()
+    {
+        var memory = new AlwaysFailCheckpointMemoryStore();
+        var manager = new AgentCheckpointManager(memory, logger: null);
+        var session = new Session { Id = "sess-checkpoint-fail", ChannelId = "websocket", SenderId = "user" };
+        var invocation = new ToolInvocation
+        {
+            CallId = "call_1",
+            ToolName = "demo_tool",
+            Arguments = "{}",
+            Result = "tool result"
+        };
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await manager.PersistToolBatchCheckpointAsync(
+                session,
+                new TurnContext { SessionId = session.Id, ChannelId = session.ChannelId },
+                iteration: 0,
+                [invocation],
+                CancellationToken.None));
+
+        Assert.Equal(3, memory.SaveAttempts);
+        Assert.NotNull(session.ExecutionCheckpoint);
+        Assert.Null(session.ExecutionCheckpoint.PersistedAtUtc);
+    }
+
+    [Fact]
     public async Task ModelExecutor_EstimatedTokenAdmission_ThrowsForNonStreamingAndReturnsStreamingError()
     {
         var metrics = new RuntimeMetrics();
@@ -212,7 +351,13 @@ public sealed class AgentRuntimeComponentTests
             llmExecutionService: null,
             accounting,
             logger: null);
-        var session = new Session { Id = "sess-budget", ChannelId = "websocket", SenderId = "user" };
+        var session = new Session
+        {
+            Id = "sess-budget",
+            ChannelId = "websocket",
+            SenderId = "user",
+            TotalInputTokens = 1
+        };
         var messages = new List<ChatMessage> { new(ChatRole.User, "hello") };
         var turnCtx = new TurnContext { SessionId = session.Id, ChannelId = session.ChannelId };
 
@@ -236,6 +381,38 @@ public sealed class AgentRuntimeComponentTests
         Assert.Contains("close to its token budget", streamResult.Error, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(2, metrics.EstimatedTokenAdmissionRejects);
         Assert.Equal(0, metrics.TotalLlmCalls);
+    }
+
+    [Fact]
+    public async Task ModelExecutor_NonStreaming_RetriesTransportHttpRequestException()
+    {
+        var chatClient = new RetryThenSuccessChatClient();
+        var config = new LlmProviderConfig
+        {
+            Provider = "openai",
+            ApiKey = "test",
+            Model = "primary-model",
+            TimeoutSeconds = 0,
+            RetryCount = 1
+        };
+        var executor = new AgentModelExecutor(
+            chatClient,
+            config,
+            new CircuitBreaker(failureThreshold: 5, cooldown: TimeSpan.FromSeconds(1)),
+            llmExecutionService: null,
+            CreateAccounting(config),
+            logger: null);
+
+        var result = await executor.CallLlmWithResilienceAsync(
+            new Session { Id = "sess-retry", ChannelId = "websocket", SenderId = "user" },
+            [new ChatMessage(ChatRole.User, "hello")],
+            new ChatOptions { ModelId = "primary-model" },
+            new TurnContext { SessionId = "sess-retry", ChannelId = "websocket" },
+            skillPromptLength: 0,
+            CancellationToken.None);
+
+        Assert.Equal("retry ok", result.Response.Text);
+        Assert.Equal(2, chatClient.Calls);
     }
 
     [Fact]
@@ -271,6 +448,99 @@ public sealed class AgentRuntimeComponentTests
         Assert.Null(result.Error);
         Assert.Equal("fallback ok", result.FullText);
         Assert.Equal(["primary-model", "fallback-model"], chatClient.StreamedModels);
+    }
+
+    [Fact]
+    public async Task ModelExecutor_StreamingDirectFallback_ClearsFailedCacheCounters()
+    {
+        var chatClient = new FallbackStreamingUsageThenSuccessChatClient();
+        var config = new LlmProviderConfig
+        {
+            Provider = "openai",
+            ApiKey = "test",
+            Model = "primary-model",
+            FallbackModels = ["fallback-model"],
+            TimeoutSeconds = 0,
+            RetryCount = 0
+        };
+        var executor = new AgentModelExecutor(
+            chatClient,
+            config,
+            new CircuitBreaker(failureThreshold: 5, cooldown: TimeSpan.FromSeconds(1)),
+            llmExecutionService: null,
+            CreateAccounting(config),
+            logger: null);
+
+        var result = await executor.StreamLlmCollectAsync(
+            new Session { Id = "sess-cache-reset", ChannelId = "websocket", SenderId = "user" },
+            [new ChatMessage(ChatRole.User, "hello")],
+            new ChatOptions { ModelId = "primary-model" },
+            new TurnContext { SessionId = "sess-cache-reset", ChannelId = "websocket" },
+            skillPromptLength: 0,
+            CancellationToken.None);
+
+        Assert.Null(result.Error);
+        Assert.Equal("fallback ok", result.FullText);
+        Assert.Equal(0, result.CacheReadTokens);
+        Assert.Equal(0, result.CacheWriteTokens);
+    }
+
+    [Fact]
+    public void TurnAccounting_RecordCompactionUsage_RecordsProviderAndCacheUsage()
+    {
+        var metrics = new RuntimeMetrics();
+        var providerUsage = new ProviderUsageTracker();
+        var config = new LlmProviderConfig
+        {
+            Provider = "openai",
+            ApiKey = "test",
+            Model = "primary-model"
+        };
+        var accounting = CreateAccounting(config, metrics, providerUsage);
+        var session = new Session { Id = "sess-compaction", ChannelId = "websocket", SenderId = "user" };
+        var response = new ChatResponse([new ChatMessage(ChatRole.Assistant, "summary")])
+        {
+            Usage = new UsageDetails
+            {
+                InputTokenCount = 12,
+                OutputTokenCount = 4,
+                CachedInputTokenCount = 3,
+                AdditionalCounts = new AdditionalPropertiesDictionary<long>
+                {
+                    ["cache_creation_input_tokens"] = 2
+                }
+            }
+        };
+
+        accounting.RecordCompactionUsage(
+            session,
+            new TurnContext { SessionId = session.Id, ChannelId = session.ChannelId },
+            TimeSpan.FromMilliseconds(5),
+            [new ChatMessage(ChatRole.User, "summarize")],
+            new LlmExecutionResult
+            {
+                ProviderId = "openai",
+                ModelId = "primary-model",
+                Response = response
+            },
+            inputTokens: 12,
+            outputTokens: 4,
+            skillPromptLength: 0);
+
+        Assert.Equal(12, session.TotalInputTokens);
+        Assert.Equal(4, session.TotalOutputTokens);
+        Assert.Equal(3, session.TotalCacheReadTokens);
+        Assert.Equal(2, session.TotalCacheWriteTokens);
+        Assert.Equal(3, metrics.PromptCacheReads);
+        Assert.Equal(2, metrics.PromptCacheWrites);
+        var provider = Assert.Single(providerUsage.Snapshot());
+        Assert.Equal(12, provider.InputTokens);
+        Assert.Equal(4, provider.OutputTokens);
+        Assert.Equal(3, provider.CacheReadTokens);
+        Assert.Equal(2, provider.CacheWriteTokens);
+        var turn = Assert.Single(providerUsage.RecentTurns(session.Id));
+        Assert.Equal(3, turn.CacheReadTokens);
+        Assert.Equal(2, turn.CacheWriteTokens);
     }
 
     [Theory]
@@ -385,11 +655,12 @@ public sealed class AgentRuntimeComponentTests
     private static AgentTurnAccounting CreateAccounting(
         LlmProviderConfig config,
         RuntimeMetrics? metrics = null,
+        ProviderUsageTracker? providerUsage = null,
         long sessionTokenBudget = 0,
         bool estimateTokenBudgetAdmission = false)
         => new(
             metrics,
-            providerUsage: null,
+            providerUsage,
             config,
             sessionTokenBudget,
             estimateTokenBudgetAdmission,
@@ -417,6 +688,36 @@ public sealed class AgentRuntimeComponentTests
             ChatOptions? options = null,
             CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("The streaming chat client should not be called.");
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class RetryThenSuccessChatClient : IChatClient
+    {
+        public int Calls { get; private set; }
+        public ChatClientMetadata Metadata => new("retry-then-success-test");
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            if (Calls == 1)
+                throw new HttpRequestException("transport failure");
+
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "retry ok")]));
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
 
         public void Dispose()
         {
@@ -508,6 +809,44 @@ public sealed class AgentRuntimeComponentTests
             => ValueTask.CompletedTask;
     }
 
+    private sealed class AlwaysFailCheckpointMemoryStore : IMemoryStore
+    {
+        public int SaveAttempts { get; private set; }
+
+        public ValueTask<Session?> GetSessionAsync(string sessionId, CancellationToken ct)
+            => ValueTask.FromResult<Session?>(null);
+
+        public ValueTask SaveSessionAsync(Session session, CancellationToken ct)
+        {
+            SaveAttempts++;
+            throw new IOException("persistent checkpoint store failure");
+        }
+
+        public ValueTask<string?> LoadNoteAsync(string key, CancellationToken ct)
+            => ValueTask.FromResult<string?>(null);
+
+        public ValueTask SaveNoteAsync(string key, string content, CancellationToken ct)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DeleteNoteAsync(string key, CancellationToken ct)
+            => ValueTask.CompletedTask;
+
+        public ValueTask<IReadOnlyList<string>> ListNotesWithPrefixAsync(string prefix, CancellationToken ct)
+            => ValueTask.FromResult<IReadOnlyList<string>>([]);
+
+        public ValueTask SaveBranchAsync(SessionBranch branch, CancellationToken ct)
+            => ValueTask.CompletedTask;
+
+        public ValueTask<SessionBranch?> LoadBranchAsync(string branchId, CancellationToken ct)
+            => ValueTask.FromResult<SessionBranch?>(null);
+
+        public ValueTask<IReadOnlyList<SessionBranch>> ListBranchesAsync(string sessionId, CancellationToken ct)
+            => ValueTask.FromResult<IReadOnlyList<SessionBranch>>([]);
+
+        public ValueTask DeleteBranchAsync(string branchId, CancellationToken ct)
+            => ValueTask.CompletedTask;
+    }
+
     private sealed class FallbackStreamingChatClient : IChatClient
     {
         public List<string?> StreamedModels { get; } = [];
@@ -530,6 +869,49 @@ public sealed class AgentRuntimeComponentTests
             await Task.Yield();
             if (StreamedModels.Count == 1)
                 throw new IOException("primary stream failed");
+
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "fallback ok");
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FallbackStreamingUsageThenSuccessChatClient : IChatClient
+    {
+        private int _streamCount;
+        public ChatClientMetadata Metadata => new("fallback-streaming-cache-reset-test");
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            _streamCount++;
+            await Task.Yield();
+            if (_streamCount == 1)
+            {
+                yield return new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 10,
+                    OutputTokenCount = 5,
+                    CachedInputTokenCount = 4,
+                    AdditionalCounts = new AdditionalPropertiesDictionary<long>
+                    {
+                        ["cache_creation_input_tokens"] = 2
+                    }
+                })]);
+                throw new IOException("primary stream failed after usage");
+            }
 
             yield return new ChatResponseUpdate(ChatRole.Assistant, "fallback ok");
         }

@@ -201,11 +201,9 @@ internal sealed class AgentModelExecutor
         var modelsToTry = new List<string> { currentModel };
         if (_config.FallbackModels is { Length: > 0 })
         {
-            foreach (var fallback in _config.FallbackModels)
-            {
-                if (!string.Equals(fallback, currentModel, StringComparison.OrdinalIgnoreCase))
-                    modelsToTry.Add(fallback);
-            }
+            foreach (var fallback in _config.FallbackModels.Where(fallback =>
+                !string.Equals(fallback, currentModel, StringComparison.OrdinalIgnoreCase)))
+                modelsToTry.Add(fallback);
         }
 
         Exception? lastException = null;
@@ -256,6 +254,8 @@ internal sealed class AgentModelExecutor
                 result.ToolCalls.Clear();
                 result.InputTokens = 0;
                 result.OutputTokens = 0;
+                result.CacheReadTokens = 0;
+                result.CacheWriteTokens = 0;
             }
         }
 
@@ -317,6 +317,9 @@ internal sealed class AgentModelExecutor
 
     private static bool IsTransient(Exception ex)
     {
+        if (ex is HttpRequestException { StatusCode: null })
+            return true;
+
         if (ex is HttpRequestException httpEx && httpEx.StatusCode.HasValue)
         {
             var code = (int)httpEx.StatusCode.Value;

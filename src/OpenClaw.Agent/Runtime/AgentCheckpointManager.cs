@@ -112,18 +112,22 @@ internal sealed class AgentCheckpointManager(IMemoryStore memory, ILogger? logge
             catch (IOException ex)
             {
                 RecordFinalFailure(ex);
+                throw;
             }
             catch (TimeoutException ex)
             {
                 RecordFinalFailure(ex);
+                throw;
             }
             catch (InvalidOperationException ex)
             {
                 RecordFinalFailure(ex);
+                throw;
             }
             catch (UnauthorizedAccessException ex)
             {
                 RecordFinalFailure(ex);
+                throw;
             }
         }
     }

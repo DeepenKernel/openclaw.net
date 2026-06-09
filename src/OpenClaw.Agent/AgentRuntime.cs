@@ -195,7 +195,7 @@ public sealed class AgentRuntime : IAgentRuntime
 
         var logger = _logger ?? NullLogger.Instance;
         var skills = SkillLoader.LoadAll(_skillsConfig, _skillWorkspacePath, logger, _pluginSkillDirs);
-        _promptContext.ApplySkills(skills, _skillsConfig?.InstructionPrompt);
+        _promptContext.ApplySkills(skills, _skillsConfig.InstructionPrompt);
 
         if (skills.Count > 0)
             logger.LogInformation("{Summary}", SkillPromptBuilder.BuildSummary(skills));
@@ -493,8 +493,7 @@ public sealed class AgentRuntime : IAgentRuntime
             if (toolCalls.Count == 0)
             {
                 // Final text response
-                var finalText = _redaction.Redact(streamResult.FullText);
-                session.History.Add(new ChatTurn { Role = "assistant", Content = finalText });
+                session.History.Add(new ChatTurn { Role = "assistant", Content = redactedText });
                 AgentCheckpointManager.MarkCheckpointCompleted(session, SessionCheckpointStates.Completed, "final_response");
                 yield return AgentStreamEvent.Complete();
                 _accounting.AppendContractSnapshot(session, "active");
@@ -516,8 +515,12 @@ public sealed class AgentRuntime : IAgentRuntime
                     toolBatch = update.Batch;
             }
 
-            var invocations = toolBatch?.Invocations ?? [];
-            var toolResults = toolBatch?.Results ?? [];
+            if (toolBatch is null)
+                throw new InvalidOperationException(
+                    $"Streaming tool call loop completed without final batch for session={session.Id} correlation={turnCtx.CorrelationId}.");
+
+            var invocations = toolBatch.Invocations;
+            var toolResults = toolBatch.Results;
 
             messages.Add(new ChatMessage(ChatRole.Assistant, toolCalls.Cast<AIContent>().ToList()));
             messages.Add(new ChatMessage(ChatRole.Tool, toolResults.Cast<AIContent>().ToList()));
@@ -686,9 +689,11 @@ public sealed class AgentRuntime : IAgentRuntime
                 session,
                 compactionTurnCtx,
                 summarySw.Elapsed,
+                summaryMessages,
                 response,
                 summaryInputTokens,
-                summaryOutputTokens);
+                summaryOutputTokens,
+                _promptContext.SkillPromptLength);
 
             var summary = response.Response.Text ?? "";
 
@@ -708,6 +713,10 @@ public sealed class AgentRuntime : IAgentRuntime
                 // Summarization returned empty — fall back to simple trim
                 _promptContext.TrimHistory(session, _maxHistoryTurns);
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

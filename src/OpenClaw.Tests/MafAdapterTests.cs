@@ -784,6 +784,7 @@ public sealed class MafAdapterTests
             {
                 await foreach (var _ in runtime.RunStreamingAsync(session, "Open README.md", CancellationToken.None))
                 {
+                    // Intentionally consume the stream to trigger agent creation and surface the expected exception.
                 }
             });
 

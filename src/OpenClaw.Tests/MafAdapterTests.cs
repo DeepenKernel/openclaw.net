@@ -495,6 +495,9 @@ public sealed class MafAdapterTests
             {
                 Tier = "T1",
                 ModelProfileId = "mini-readonly",
+                DirectModelFallbackProfileId = "mini-readonly-fallback",
+                ReasoningLevel = "high",
+                ResponsePolicy = "detailed",
                 AllowedTools = ["echo_tool"],
                 SystemPromptSuffix = "Keep the reply short and skip planning.",
                 Reason = "simple_read_only"
@@ -567,13 +570,22 @@ public sealed class MafAdapterTests
             var session = CreateSession("maf-turn-routing");
             session.RouteAllowedTools = ["shell"];
             session.SystemPromptOverride = "Original route prompt";
+            session.FallbackModelProfileIds = ["legacy-fallback"];
+            session.ReasoningEffort = "low";
+            session.ResponseMode = "concise";
 
             await runtime.RunAsync(session, "Open README.md", CancellationToken.None);
 
             Assert.Equal(["echo_tool"], executionService.LastToolNames);
+            Assert.Equal(["mini-readonly-fallback", "legacy-fallback"], executionService.LastFallbackModelProfileIds);
+            Assert.Equal("high", executionService.LastReasoningEffort);
+            Assert.Equal("detailed", executionService.LastResponseMode);
             await routing.Received(1).ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>());
             Assert.Equal(["shell"], session.RouteAllowedTools);
             Assert.Equal("Original route prompt", session.SystemPromptOverride);
+            Assert.Equal(["legacy-fallback"], session.FallbackModelProfileIds);
+            Assert.Equal("low", session.ReasoningEffort);
+            Assert.Equal("concise", session.ResponseMode);
             Assert.Equal("T1", session.RouteModelTier);
             Assert.Null(session.RouteReason);
         }
@@ -628,6 +640,75 @@ public sealed class MafAdapterTests
             Assert.Equal("ok", result);
             Assert.Equal("T2", session.RouteModelTier);
             Assert.Equal(["echo_tool"], executionService.LastToolNames);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_OnnxPolicyDecision_AppliesAndRestoresFallbackReasoningAndResponsePolicy()
+    {
+        var routing = new OnnxTurnRoutingPolicy(
+            new DynamicTurnRoutingConfig
+            {
+                Enabled = true,
+                Assets = new DynamicTurnRoutingAssetsConfig
+                {
+                    ClassifierModelPath = "classifier.onnx",
+                    EmbeddingModelPath = "embeddings.onnx",
+                    TokenizerPath = "tokenizer.json"
+                },
+                Policy = new DynamicTurnRoutingPolicyConfig
+                {
+                    Tiers = new DynamicTurnRoutingTierMap
+                    {
+                        T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "local-freeform", DisableTools = true },
+                        T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "mini-readonly", AllowedTools = ["echo_tool"] },
+                        T2 = new DynamicTurnRoutingTierTarget
+                        {
+                            ModelProfileId = "frontier-tools",
+                            DirectModelFallbackProfileId = "frontier-tools-fallback",
+                            ReasoningLevel = "high",
+                            ResponsePolicy = "detailed",
+                            AllowedTools = ["echo_tool"]
+                        },
+                        T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-deep" }
+                    }
+                }
+            },
+            predictedTier: 2,
+            NullLogger<OnnxTurnRoutingPolicy>.Instance);
+
+        var executionService = new CapturingLlmExecutionService();
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-onnx-parity-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                executionService,
+                new MafOptions(),
+                routingPolicy: routing,
+                tools: [new TestTool("echo_tool")]);
+            var session = CreateSession("maf-onnx-parity");
+            session.FallbackModelProfileIds = ["legacy-fallback"];
+            session.ReasoningEffort = "low";
+            session.ResponseMode = "concise";
+
+            var result = await runtime.RunAsync(session, "route this turn", CancellationToken.None);
+
+            Assert.Equal("ok", result);
+            Assert.Equal("T2", session.RouteModelTier);
+            Assert.Equal(["echo_tool"], executionService.LastToolNames);
+            Assert.Equal(["frontier-tools-fallback", "legacy-fallback"], executionService.LastFallbackModelProfileIds);
+            Assert.Equal("high", executionService.LastReasoningEffort);
+            Assert.Equal("detailed", executionService.LastResponseMode);
+            Assert.Equal(["legacy-fallback"], session.FallbackModelProfileIds);
+            Assert.Equal("low", session.ReasoningEffort);
+            Assert.Equal("concise", session.ResponseMode);
         }
         finally
         {
@@ -1284,6 +1365,12 @@ public sealed class MafAdapterTests
 
         public IReadOnlyList<string> LastPreferredModelTags { get; private set; } = [];
 
+        public IReadOnlyList<string> LastFallbackModelProfileIds { get; private set; } = [];
+
+        public string? LastReasoningEffort { get; private set; }
+
+        public string LastResponseMode { get; private set; } = SessionResponseModes.Default;
+
         public CircuitState DefaultCircuitState => CircuitState.Closed;
 
         public Task<LlmExecutionResult> GetResponseAsync(
@@ -1300,6 +1387,9 @@ public sealed class MafAdapterTests
             _ = ct;
             LastToolNames = options.Tools?.Select(tool => tool.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray() ?? [];
             LastPreferredModelTags = session.PreferredModelTags;
+            LastFallbackModelProfileIds = session.FallbackModelProfileIds;
+            LastReasoningEffort = session.ReasoningEffort;
+            LastResponseMode = session.ResponseMode;
             return Task.FromResult(new LlmExecutionResult
             {
                 ProviderId = "test-maf",

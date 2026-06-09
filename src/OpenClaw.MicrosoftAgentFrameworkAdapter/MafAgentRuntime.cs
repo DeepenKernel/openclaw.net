@@ -600,17 +600,34 @@ public sealed class MafAgentRuntime : IAgentRuntime
         var snapshot = new TurnRoutingSnapshot(
             session.ModelProfileId,
             session.PreferredModelTags,
+            session.FallbackModelProfileIds,
             session.SystemPromptOverride,
             session.RouteAllowedTools,
             session.RouteToolsDisabled,
             session.RouteModelTier,
-            session.RouteReason);
+            session.RouteReason,
+            session.ReasoningEffort,
+            session.ResponseMode);
 
         if (!string.IsNullOrWhiteSpace(decision.ModelProfileId))
             session.ModelProfileId = decision.ModelProfileId;
 
+        if (!string.IsNullOrWhiteSpace(decision.DirectModelFallbackProfileId))
+        {
+            var fallback = decision.DirectModelFallbackProfileId!;
+            session.FallbackModelProfileIds =
+            [
+                fallback,
+                .. session.FallbackModelProfileIds.Where(item => !string.Equals(item, fallback, StringComparison.OrdinalIgnoreCase))
+            ];
+        }
+
         if (decision.PreferredTags.Length > 0)
             session.PreferredModelTags = decision.PreferredTags;
+        if (!string.IsNullOrWhiteSpace(decision.ReasoningLevel))
+            session.ReasoningEffort = decision.ReasoningLevel;
+        if (!string.IsNullOrWhiteSpace(decision.ResponsePolicy))
+            session.ResponseMode = decision.ResponsePolicy;
         if (decision.DisableTools)
         {
             session.RouteToolsDisabled = true;
@@ -644,11 +661,14 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly record struct TurnRoutingSnapshot(
         string? ModelProfileId,
         string[] PreferredModelTags,
+        string[] FallbackModelProfileIds,
         string? SystemPromptOverride,
         string[] RouteAllowedTools,
         bool RouteToolsDisabled,
         string? RouteModelTier,
-        string? RouteReason);
+        string? RouteReason,
+        string? ReasoningEffort,
+        string ResponseMode);
 
     private sealed class TurnRoutingRestoreScope(Session session, TurnRoutingSnapshot snapshot) : IDisposable
     {
@@ -656,10 +676,13 @@ public sealed class MafAgentRuntime : IAgentRuntime
         {
             session.ModelProfileId = snapshot.ModelProfileId;
             session.PreferredModelTags = snapshot.PreferredModelTags;
+            session.FallbackModelProfileIds = snapshot.FallbackModelProfileIds;
             session.SystemPromptOverride = snapshot.SystemPromptOverride;
             session.RouteAllowedTools = snapshot.RouteAllowedTools;
             session.RouteToolsDisabled = snapshot.RouteToolsDisabled;
             session.RouteReason = snapshot.RouteReason;
+            session.ReasoningEffort = snapshot.ReasoningEffort;
+            session.ResponseMode = snapshot.ResponseMode;
         }
     }
 

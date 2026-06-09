@@ -346,6 +346,54 @@ Checksum consistency note:
 (Get-FileHash "models/routing/opensquilla-v4-compat/runtime-config.json" -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
+### Stage A export script usage (recommended)
+
+The repository already includes [scripts/export_opensquilla_to_openclaw_bundle.py](../scripts/export_opensquilla_to_openclaw_bundle.py), which converts an OpenSquilla v4.2 directory into an OpenClaw-compatible bundle.
+
+Minimal command (PowerShell):
+
+```powershell
+python scripts/export_opensquilla_to_openclaw_bundle.py `
+  --out-dir models/routing/opensquilla-v4-compat `
+  --force
+```
+
+Recommended command (strict checks + WordPiece path):
+
+```powershell
+python scripts/export_opensquilla_to_openclaw_bundle.py `
+  --source-dir E:/GitHub/opensquilla/src/opensquilla/squilla_router/models/v4.2_phase3_inference `
+  --out-dir models/routing/opensquilla-v4-compat `
+  --expected-classes 4 `
+  --allow-wordpiece `
+  --require-onnxruntime `
+  --force
+```
+
+Option quick reference:
+
+- `--out-dir`: required output directory (writes `manifest.json`, `classifier.onnx`, `embeddings.onnx`, `tokenizer.json`, and `runtime-config.json`)
+- `--source-dir`: OpenSquilla source model directory; defaults to the script's built-in v4.2 path
+- `--force`: overwrite existing output directory
+- `--expected-classes`: classifier class-count check (should be `4` for `T0`..`T3`)
+- `--require-onnxruntime`: fail if `onnxruntime` is unavailable and enable stricter ONNX inspection checks
+- `--allow-wordpiece`: allow export when tokenizer family is WordPiece (without this flag, WordPiece export fails fast)
+
+After export, wire it through config:
+
+```json
+{
+  "OpenClaw": {
+    "DynamicTurnRouting": {
+      "Enabled": true,
+      "BundlePath": "models/routing/opensquilla-v4-compat"
+    }
+  }
+}
+```
+
+Before rollout, run the JSON parse and checksum checks from the previous section to confirm artifact integrity.
+
 ### Stage A.1: Offline sample validation notes
 
 To preserve evidence for the “Stage A first, make it usable” milestone, keep both 10-sample snapshots for later comparison:
@@ -401,7 +449,7 @@ Stage B rollback runbook (short form):
 - **Risk 1: native OpenSquilla bundle shape still does not match the OpenClaw compat contract**. Assets can exist but still fail composition because the shipped v4.2 directory layout is not the same thing as an OpenClaw-ready bundle.
 - **Risk 2: tokenizer compatibility is asset-specific, not family-guaranteed**. WordPiece is no longer automatically incompatible, but tokenizer and pre-tokenizer variants still need validation against the current loader.
 - **Risk 3: classifier pipeline mismatch**. Even with a readable tokenizer and embeddings, OpenSquilla v4.2's multi-head fusion path does not map directly onto the current single-classifier ONNX runtime.
-- **Risk 4: native/MAF semantic gap**. Native runtime currently consumes more routing fields than MAF runtime (for example direct fallback, reasoning level, response policy).
+- **Risk 4: native/MAF regression drift**. The current implementation now aligns both paths on key routing fields (including direct fallback, reasoning level, and response policy); the remaining risk is future changes reintroducing drift, so parity checks and regression tests should remain in place.
 
 Recommended order:
 
@@ -419,7 +467,7 @@ Common historical failure cases and troubleshooting:
 - Signal: tokenizer load failure
   - Check whether the tokenizer exceeds the specific shapes the current loader already supports; the current reference bundle uses `WordPiece` + `BertPreTokenizer`, so a failure here is more likely to come from another tokenizer family or an uncovered pre-tokenizer combination
 - Signal: native/MAF behavior mismatch
-  - If this still appears, confirm whether you are depending on extra routing fields that are currently consumed only by native runtime
+  - This gap is fixed in the current version; if it reappears, first check for recent changes that skipped MAF apply/restore handling for `DirectModelFallbackProfileId`, `ReasoningLevel`, or `ResponsePolicy`, or skipped corresponding regression coverage
 
 Reference `runtime-config.json` sample:
 

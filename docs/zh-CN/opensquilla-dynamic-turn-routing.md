@@ -284,9 +284,9 @@ OpenSquilla 当前发布的 `squilla_router` 模型目录（`src/opensquilla/squ
 ## 当前接入风险与建议
 
 - **风险 1：OpenSquilla 原生 bundle 目录形态仍不符合 OpenClaw compat 契约**。即便资产存在，也可能因为 v4.2 发布目录不是 OpenClaw-ready bundle 而无法直接组合。
-- **风险 2：tokenizer 兼容是“具体资产级别”的问题，不是“WordPiece 必挂”**。WordPiece 已不再自动不兼容，但具体 tokenizer / pre-tokenizer 变体仍需要按目标 bundle 验证。
-- **风险 3：分类器流水线不匹配**。即便 tokenizer 和 embedding 能加载，OpenSquilla v4.2 的多头融合路径也不能直接映射到当前单 classifier ONNX 运行时。
-- **风险 4：native/MAF 行为差异**。native 路径目前比 MAF 路径消费了更多路由字段（例如 direct fallback、reasoning、response policy）。
+- **风险 2：tokenizer 兼容是“具体资产级别”的问题，不是“WordPiece 必挂”**。WordPiece 已不再自动不兼容，但具体 tokenizer / pre-tokenizer 变体仍需要按目标 bundle 验证。因此当前的风险不是“v4.2 的 tokenizer 资产完全不能用”，而是“需要针对目标兼容目录验证具体 tokenizer 形态是否兼容当前 loader”。
+- **风险 3：分类器流水线不匹配**。即便 tokenizer 和 embedding 能加载，OpenSquilla v4.2 的多头融合路径也不能直接映射到当前单 classifier ONNX 运行时。因此当前的 ONNX 路由实现仍然不能无适配直接消费 v4.2 的原生推理产物。
+- **风险 4：native/MAF 回归偏差**。当前实现已对齐两条路径对关键路由字段的消费（含 direct fallback、reasoning、response policy）；剩余风险主要是后续变更可能导致两条路径再次漂移，建议持续保留对账与回归测试。
 
 建议优先级：
 
@@ -383,6 +383,54 @@ Checksum 一致性提示：
 (Get-FileHash "models/routing/opensquilla-v4-compat/runtime-config.json" -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
+### A1.2 使用仓库脚本导出 compat bundle（推荐）
+
+仓库内已提供导出脚本 [scripts/export_opensquilla_to_openclaw_bundle.py](../../scripts/export_opensquilla_to_openclaw_bundle.py)，用于把 OpenSquilla v4.2 目录转换成 OpenClaw 可消费的 compat bundle。
+
+最小命令（PowerShell）：
+
+```powershell
+python scripts/export_opensquilla_to_openclaw_bundle.py `
+  --out-dir models/routing/opensquilla-v4-compat `
+  --force
+```
+
+推荐命令（严格检查 + WordPiece 场景）：
+
+```powershell
+python scripts/export_opensquilla_to_openclaw_bundle.py `
+  --source-dir E:/GitHub/opensquilla/src/opensquilla/squilla_router/models/v4.2_phase3_inference `
+  --out-dir models/routing/opensquilla-v4-compat `
+  --expected-classes 4 `
+  --allow-wordpiece `
+  --require-onnxruntime `
+  --force
+```
+
+参数说明（按实用优先级）：
+
+- `--out-dir`：必填，导出目录（会生成 `manifest.json`、`classifier.onnx`、`embeddings.onnx`、`tokenizer.json`、`runtime-config.json`）
+- `--source-dir`：OpenSquilla 模型目录，不传则使用脚本内默认路径
+- `--force`：若输出目录已存在则覆盖
+- `--expected-classes`：分类器类别数校验，当前应为 `4`
+- `--require-onnxruntime`：要求本机可用 `onnxruntime`，并执行更严格的 ONNX 结构检查
+- `--allow-wordpiece`：当 tokenizer 是 WordPiece 时允许导出（不加该参数时会直接报错退出）
+
+导出完成后，按下列配置接入：
+
+```json
+{
+  "OpenClaw": {
+    "DynamicTurnRouting": {
+      "Enabled": true,
+      "BundlePath": "models/routing/opensquilla-v4-compat"
+    }
+  }
+}
+```
+
+建议在接入前再执行一次 A1.1 的 JSON 可解析检查与 checksum 校验，确保导出产物完整且元信息一致。
+
 ### A2. OpenClaw 配置模板（可直接套用）
 
 ```json
@@ -458,7 +506,7 @@ Checksum 一致性提示：
 - 信号：加载 tokenizer 时报不支持
   - 先检查 tokenizer 是否超出了当前 loader 已覆盖的具体形态；当前参考 bundle 使用的 `WordPiece` + `BertPreTokenizer` 已被支持，因此问题更可能出在其他 tokenizer family 或未覆盖的 pre-tokenizer 组合上
 - 历史风险/排查建议：MAF 行为与 native 不一致
-  - 如果仍观察到该现象，先确认是否依赖了当前仅 native 消费的扩展路由字段
+  - 该差异在当前版本已修复；若再次出现，优先检查是否有新变更遗漏了 MAF 路径对 `DirectModelFallbackProfileId`、`ReasoningLevel`、`ResponsePolicy` 的应用/恢复逻辑，或遗漏了对应回归测试
 
 ### A5. 建议实施节奏
 
@@ -581,6 +629,7 @@ Get-Content "$bundle\runtime-config.json" -Raw | ConvertFrom-Json | Out-Null
 
 ## 相关文档
 
+- [dynamic-turn-routing-model-profiles.md](dynamic-turn-routing-model-profiles.md)：Dynamic Turn Routing 与 Model Profiles 协同指南
 - [LOCAL_MODELS.md](../LOCAL_MODELS.md)：本地模型和本地资产说明
 - [ARCHITECTURE_BOUNDARIES.md](../ARCHITECTURE_BOUNDARIES.md)：为什么 ONNX 路由（routing）不进入 `OpenClaw.Core`
 - [MODEL_PROFILES.md](../MODEL_PROFILES.md)：被路由的模型档位（routed profile）如何继续走现有模型选择策略

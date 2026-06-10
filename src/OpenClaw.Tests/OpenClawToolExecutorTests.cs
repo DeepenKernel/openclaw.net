@@ -350,6 +350,76 @@ public sealed class OpenClawToolExecutorTests
         Assert.Equal(0, tool.LocalExecutionCount);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_MetaInvokeWithRuntimeExecutor_UsesRuntimeCallback()
+    {
+        var tool = new RecordingTool("meta_invoke", "tool-fallback");
+        var callbackCalls = 0;
+
+        var executor = new OpenClawToolExecutor(
+            [tool],
+            toolTimeoutSeconds: 5,
+            requireToolApproval: false,
+            approvalRequiredTools: [],
+            hooks: [],
+            metrics: new RuntimeMetrics(),
+            logger: NullLogger.Instance,
+            metaInvokeExecutor: (_, skill, input, _) =>
+            {
+                callbackCalls++;
+                return Task.FromResult($"meta:{skill}:{input}");
+            });
+
+        var result = await executor.ExecuteAsync(
+            "meta_invoke",
+            """{"skill":"meta-research","input":"hello"}""",
+            callId: null,
+            CreateSession(),
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            CancellationToken.None);
+
+        Assert.Equal("meta:meta-research:hello", result.ResultText);
+        Assert.Equal(1, callbackCalls);
+        Assert.Equal(0, tool.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MetaInvokeWithInvalidArguments_FallsBackToToolImplementation()
+    {
+        var tool = new RecordingTool("meta_invoke", "tool-fallback");
+        var callbackCalls = 0;
+
+        var executor = new OpenClawToolExecutor(
+            [tool],
+            toolTimeoutSeconds: 5,
+            requireToolApproval: false,
+            approvalRequiredTools: [],
+            hooks: [],
+            metrics: new RuntimeMetrics(),
+            logger: NullLogger.Instance,
+            metaInvokeExecutor: (_, _, _, _) =>
+            {
+                callbackCalls++;
+                return Task.FromResult("meta-callback");
+            });
+
+        var result = await executor.ExecuteAsync(
+            "meta_invoke",
+            """{"input":"hello"}""",
+            callId: null,
+            CreateSession(),
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            CancellationToken.None);
+
+        Assert.Equal("tool-fallback", result.ResultText);
+        Assert.Equal(0, callbackCalls);
+        Assert.Equal(1, tool.CallCount);
+    }
+
     private static OpenClawToolExecutor CreateExecutor(
         IReadOnlyList<ITool> tools,
         IToolSandbox? toolSandbox = null,
@@ -469,5 +539,20 @@ public sealed class OpenClawToolExecutorTests
             Exception? exception,
             Func<TState, Exception?, string> formatter)
             => Messages.Add(formatter(state, exception));
+    }
+
+    private sealed class RecordingTool(string name, string result) : ITool
+    {
+        private int _callCount;
+        public int CallCount => Volatile.Read(ref _callCount);
+        public string Name => name;
+        public string Description => "Recording tool";
+        public string ParameterSchema => """{"type":"object","properties":{"value":{"type":"string"}}}""";
+
+        public ValueTask<string> ExecuteAsync(string argumentsJson, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _callCount);
+            return ValueTask.FromResult(result);
+        }
     }
 }

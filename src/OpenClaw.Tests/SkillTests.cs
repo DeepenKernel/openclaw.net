@@ -135,6 +135,111 @@ public class SkillLoaderTests
     }
 
     [Fact]
+    public void ParseSkillContent_KindMeta_SetsKind()
+    {
+        var content = """
+            ---
+            name: meta-skill
+            description: Meta orchestrator skill
+            kind: meta
+            composition: {"steps":[{"id":"s1","kind":"agent","skill":"web-research"}]}
+            ---
+            Meta instructions.
+            """;
+
+        var skill = SkillLoader.ParseSkillContent(content, "/skills/meta", SkillSource.Workspace);
+
+        Assert.NotNull(skill);
+        Assert.Equal(SkillKind.Meta, skill!.Kind);
+    }
+
+    [Fact]
+    public void ParseSkillContent_KindMissing_UsesStandardDefault()
+    {
+        var content = """
+            ---
+            name: standard-skill
+            description: Standard skill
+            ---
+            Standard instructions.
+            """;
+
+        var skill = SkillLoader.ParseSkillContent(content, "/skills/standard", SkillSource.Workspace);
+
+        Assert.NotNull(skill);
+        Assert.Equal(SkillKind.Standard, skill!.Kind);
+    }
+
+    [Fact]
+    public void ParseSkillContent_InvalidKind_ReturnsNull()
+    {
+        var content = """
+            ---
+            name: invalid-kind
+            description: Should fail
+            kind: unknown
+            ---
+            Instructions.
+            """;
+
+        var skill = SkillLoader.ParseSkillContent(content, "/skills/invalid", SkillSource.Workspace);
+
+        Assert.Null(skill);
+    }
+
+    [Fact]
+    public void ParseSkillContent_MetaProtocolFields_ParsesSuccessfully()
+    {
+        var content = """
+            ---
+            name: meta-protocol
+            description: Meta protocol fields
+            kind: meta
+            triggers: ["帮我调研并给出建议", "生成决策备忘录"]
+            meta_priority: 50
+            final_text_mode: auto
+            composition: {"steps":[{"id":"research","kind":"agent","skill":"web-research","with":{"input":"{{input}}"}},{"id":"decision","type":"llm_chat","depends_on":["research"],"with":{"prompt":"{{outputs.research}}"}}]}
+            ---
+            Meta instructions.
+            """;
+
+        var skill = SkillLoader.ParseSkillContent(content, "/skills/meta-protocol", SkillSource.Workspace);
+
+        Assert.NotNull(skill);
+        Assert.Equal(SkillKind.Meta, skill!.Kind);
+        Assert.Equal(2, skill.Triggers.Count);
+        Assert.Equal(50, skill.MetaPriority);
+        Assert.Equal("auto", skill.FinalTextMode);
+        Assert.NotNull(skill.Composition);
+        Assert.Equal(2, skill.Composition!.Steps.Count);
+        Assert.Equal("research", skill.Composition.Steps[0].Id);
+        Assert.Equal("agent", skill.Composition.Steps[0].Kind);
+        Assert.Equal("{\"input\":\"{{input}}\"}", skill.Composition.Steps[0].WithJson);
+        Assert.Equal("decision", skill.Composition.Steps[1].Id);
+        Assert.Equal("llm_chat", skill.Composition.Steps[1].Kind);
+        Assert.Equal("{\"prompt\":\"{{outputs.research}}\"}", skill.Composition.Steps[1].WithJson);
+        Assert.Single(skill.Composition.Steps[1].DependsOn);
+        Assert.Equal("research", skill.Composition.Steps[1].DependsOn[0]);
+    }
+
+    [Fact]
+    public void ParseSkillContent_MetaWithoutComposition_ReturnsNull()
+    {
+        var content = """
+            ---
+            name: meta-missing-composition
+            description: Invalid meta
+            kind: meta
+            ---
+            Meta instructions.
+            """;
+
+        var skill = SkillLoader.ParseSkillContent(content, "/skills/meta-missing", SkillSource.Workspace);
+
+        Assert.Null(skill);
+    }
+
+    [Fact]
     public void ParseSkillContent_ReplacesBaseDir()
     {
         var content = """
@@ -701,6 +806,29 @@ public class SkillPromptBuilderTests
     }
 
     [Fact]
+    public void BuildSummary_MetaSkill_IncludesMetaFlags()
+    {
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "meta-brief",
+                Kind = SkillKind.Meta,
+                Description = "Meta brief",
+                Instructions = "...",
+                Location = "/skills/meta-brief",
+                MetaPriority = 40,
+                Source = SkillSource.Workspace
+            }
+        };
+
+        var result = SkillPromptBuilder.BuildSummary(skills);
+
+        Assert.Contains("kind:meta", result);
+        Assert.Contains("meta-priority:40", result);
+    }
+
+    [Fact]
     public void EstimateCharacterCost_NoSkills_ReturnsZero()
     {
         Assert.Equal(0, SkillPromptBuilder.EstimateCharacterCost([]));
@@ -811,6 +939,31 @@ public class SkillPromptBuilderTests
         Assert.Contains("path=\"references/lookup.md\"", index);
         Assert.Contains("kind=\"script\"", index);
         Assert.Contains("path=\"scripts/run.sh\"", index);
+    }
+
+    [Fact]
+    public void BuildIndex_MetaSkill_IncludesKindTriggersAndPriority()
+    {
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "meta-research",
+                Kind = SkillKind.Meta,
+                Description = "Meta research flow",
+                Instructions = "...",
+                Location = "/skills/meta-research",
+                MetaPriority = 80,
+                Triggers = ["帮我调研", "生成决策建议"]
+            }
+        };
+
+        var index = SkillPromptBuilder.BuildIndex(skills);
+
+        Assert.Contains("<kind>meta</kind>", index);
+        Assert.Contains("<meta-priority>80</meta-priority>", index);
+        Assert.Contains("<triggers>", index);
+        Assert.Contains("<trigger>帮我调研</trigger>", index);
     }
 
     [Fact]
@@ -1182,6 +1335,165 @@ public class LoadSkillToolTests
 
         var missing = await tool.ExecuteAsync("""{"skill":"first"}""", default);
         Assert.Contains("not found", missing);
+    }
+}
+
+public class MetaSkillResolverTests
+{
+    [Fact]
+    public void TryResolve_NoSkills_ReturnsFalse()
+    {
+        var resolved = MetaSkillResolver.TryResolve([], "帮我调研", out var skill);
+
+        Assert.False(resolved);
+        Assert.Null(skill);
+    }
+
+    [Fact]
+    public void TryResolve_MatchesByTrigger_ReturnsMetaSkill()
+    {
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "meta-research",
+                Kind = SkillKind.Meta,
+                Description = "Meta research",
+                Instructions = "...",
+                Location = "/skills/meta-research",
+                Triggers = ["帮我调研"]
+            }
+        };
+
+        var resolved = MetaSkillResolver.TryResolve(skills, "请帮我调研这个市场", out var skill);
+
+        Assert.True(resolved);
+        Assert.NotNull(skill);
+        Assert.Equal("meta-research", skill!.Name);
+    }
+
+    [Fact]
+    public void TryResolve_HigherMetaPriority_Wins()
+    {
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "meta-low",
+                Kind = SkillKind.Meta,
+                Description = "Low priority",
+                Instructions = "...",
+                Location = "/skills/meta-low",
+                MetaPriority = 10,
+                Triggers = ["调研"]
+            },
+            new()
+            {
+                Name = "meta-high",
+                Kind = SkillKind.Meta,
+                Description = "High priority",
+                Instructions = "...",
+                Location = "/skills/meta-high",
+                MetaPriority = 80,
+                Triggers = ["调研"]
+            }
+        };
+
+        var resolved = MetaSkillResolver.TryResolve(skills, "调研这个问题", out var skill);
+
+        Assert.True(resolved);
+        Assert.NotNull(skill);
+        Assert.Equal("meta-high", skill!.Name);
+    }
+
+    [Fact]
+    public void TryResolve_NonMetaSkills_AreIgnored()
+    {
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "plain",
+                Kind = SkillKind.Standard,
+                Description = "Plain skill",
+                Instructions = "...",
+                Location = "/skills/plain",
+                Triggers = ["调研"]
+            }
+        };
+
+        var resolved = MetaSkillResolver.TryResolve(skills, "调研这个问题", out var skill);
+
+        Assert.False(resolved);
+        Assert.Null(skill);
+    }
+}
+
+public class MetaInvokeToolTests
+{
+    [Fact]
+    public async Task ExecuteAsync_WithValidMetaSkill_ReturnsIntentPayload()
+    {
+        var skills = new List<SkillDefinition>
+        {
+            new()
+            {
+                Name = "meta-research",
+                Kind = SkillKind.Meta,
+                Description = "Meta research flow",
+                Instructions = "...",
+                Location = "/skills/meta-research",
+                FinalTextMode = "auto",
+                MetaPriority = 60,
+                Composition = new MetaSkillComposition
+                {
+                    Steps =
+                    [
+                        new MetaSkillStepDefinition { Id = "s1", Kind = "agent" },
+                        new MetaSkillStepDefinition { Id = "s2", Kind = "llm_chat", DependsOn = ["s1"] }
+                    ]
+                }
+            }
+        };
+
+        var tool = new MetaInvokeTool(() => skills);
+        var result = await tool.ExecuteAsync("""{"skill":"meta-research","input":"请调研并给建议"}""", default);
+
+        Assert.Contains("\"skill\":\"meta-research\"", result);
+        Assert.Contains("\"finalTextMode\":\"auto\"", result);
+        Assert.Contains("\"metaPriority\":60", result);
+        Assert.Contains("\"id\":\"s1\"", result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingSkill_ReturnsError()
+    {
+        var tool = new MetaInvokeTool(() => []);
+
+        var result = await tool.ExecuteAsync("{}", default);
+
+        Assert.Contains("missing required argument 'skill'", result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnknownMetaSkill_ReturnsAvailableList()
+    {
+        var tool = new MetaInvokeTool(() =>
+        [
+            new SkillDefinition
+            {
+                Name = "meta-a",
+                Kind = SkillKind.Meta,
+                Description = "Meta A",
+                Instructions = "...",
+                Location = "/skills/meta-a"
+            }
+        ]);
+
+        var result = await tool.ExecuteAsync("""{"skill":"meta-b"}""", default);
+
+        Assert.Contains("not found", result);
+        Assert.Contains("meta-a", result);
     }
 }
 

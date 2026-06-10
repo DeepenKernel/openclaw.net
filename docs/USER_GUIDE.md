@@ -315,6 +315,47 @@ Skill locations (precedence order):
 3. Bundled: `skills/<skill>/SKILL.md` (shipped with the gateway)
 4. Extra dirs: `OpenClaw:Skills:Load:ExtraDirs`
 
+### Meta skill structured output contract
+
+Meta skills can set `final_text_mode: structured` to return a machine-readable envelope instead of plain text.
+
+Current response shape:
+
+```json
+{
+  "skill": "meta-flow",
+  "final_text": "...",
+  "error": "...",
+  "error_code": "dependency_not_completed",
+  "steps": [
+    {
+      "id": "first",
+      "kind": "tool_call",
+      "status": "failed",
+      "duration_ms": 12.5,
+      "continued": false,
+      "failure_code": "tool_failed"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `error` and `error_code` are present only when the meta run fails.
+- `steps` is present in structured mode even when early validation fails (it may be empty).
+- `failure_code` is step-level and only appears for failed steps.
+
+Current normalized top-level `error_code` values:
+
+- `dependency_not_completed`: a step dependency in `depends_on` was missing.
+- `invalid_tool_step`: a `tool_call` step did not declare `tool`.
+- `unsupported_step_kind`: step `kind` is not supported by the current runtime.
+- `step_failed`: a step failed and execution did not continue.
+- `meta_step_error`: fallback for other meta-step failures.
+
+When `final_text_mode` is not `structured`, meta execution returns plain text and prepends `Error:` on failure.
+
 ### Installing skills from ClawHub
 
 OpenClaw.NET skill folders are compatible with the upstream OpenClaw skill format (a folder containing `SKILL.md`).

@@ -418,7 +418,9 @@ public sealed class AgentRuntime : IAgentRuntime
                 outputTokens,
                 cacheUsage.CacheReadTokens,
                 cacheUsage.CacheWriteTokens,
-                LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, _skillPromptLength),
+                response.Usage is null
+                    ? LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, _skillPromptLength)
+                    : new InputTokenComponentEstimate(),
                 isEstimated: response.Usage is null);
 
             if (TryRejectContractBudget(session, out contractBudgetMessage))
@@ -618,6 +620,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 _recordContractTurnUsage?.Invoke(session, streamResult.ProviderId, streamResult.ModelId, streamResult.InputTokens, streamResult.OutputTokens);
             if (!string.IsNullOrWhiteSpace(streamResult.ProviderId) && !string.IsNullOrWhiteSpace(streamResult.ModelId))
             {
+                    var isUsageEstimated = streamResult.IsUsageEstimated;
                 RecordTurnUsage(
                     session,
                     streamResult.ProviderId,
@@ -626,8 +629,10 @@ public sealed class AgentRuntime : IAgentRuntime
                     streamResult.OutputTokens,
                     streamResult.CacheReadTokens,
                     streamResult.CacheWriteTokens,
-                    LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, _skillPromptLength),
-                    isEstimated: false);
+                        isUsageEstimated
+                            ? LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, _skillPromptLength)
+                            : new InputTokenComponentEstimate(),
+                        isEstimated: isUsageEstimated);
             }
 
             if (TryRejectContractBudget(session, out contractBudgetMessage))
@@ -1005,6 +1010,10 @@ public sealed class AgentRuntime : IAgentRuntime
 
             messages.Insert(Math.Min(2, messages.Count), new ChatMessage(ChatRole.User, text));
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
@@ -1036,6 +1045,7 @@ public sealed class AgentRuntime : IAgentRuntime
         public int CacheWriteTokens { get; set; }
         public string? ProviderId { get; set; }
         public string? ModelId { get; set; }
+        public bool IsUsageEstimated { get; set; }
         public string? Error { get; set; }
     }
 
@@ -1117,9 +1127,15 @@ public sealed class AgentRuntime : IAgentRuntime
 
             llmSw.Stop();
             if (result.InputTokens == 0)
+            {
                 result.InputTokens = LlmExecutionEstimateBuilder.EstimateInputTokens(messages);
+                result.IsUsageEstimated = true;
+            }
             if (result.OutputTokens == 0)
+            {
                 result.OutputTokens = LlmExecutionEstimateBuilder.EstimateTokenCount(result.FullText.Length);
+                result.IsUsageEstimated = true;
+            }
 
             turnCtx.RecordLlmCall(llmSw.Elapsed, result.InputTokens, result.OutputTokens);
             _metrics?.IncrementLlmCalls();
@@ -1213,6 +1229,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 result.ToolCalls.Clear();
                 result.InputTokens = 0;
                 result.OutputTokens = 0;
+                result.IsUsageEstimated = false;
             }
         }
 
@@ -1229,9 +1246,15 @@ public sealed class AgentRuntime : IAgentRuntime
 
         // Use actual provider-reported usage when available; fall back to estimation
         if (result.InputTokens == 0)
+        {
             result.InputTokens = LlmExecutionEstimateBuilder.EstimateInputTokens(messages);
+            result.IsUsageEstimated = true;
+        }
         if (result.OutputTokens == 0)
+        {
             result.OutputTokens = LlmExecutionEstimateBuilder.EstimateTokenCount(result.FullText.Length);
+            result.IsUsageEstimated = true;
+        }
 
         turnCtx.RecordLlmCall(llmSw.Elapsed, result.InputTokens, result.OutputTokens);
         _metrics?.IncrementLlmCalls();
@@ -1578,6 +1601,10 @@ public sealed class AgentRuntime : IAgentRuntime
                 // Summarization returned empty — fall back to simple trim
                 TrimHistory(session);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

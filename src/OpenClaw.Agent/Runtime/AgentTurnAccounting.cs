@@ -132,6 +132,7 @@ internal sealed class AgentTurnAccounting
         session.AddTokenUsage(inputTokens, outputTokens);
         session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
         _recordContractTurnUsage?.Invoke(session, executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
+        var isUsageEstimated = executionResult.Response.Usage is null;
         RecordTurnUsage(
             session,
             executionResult.ProviderId,
@@ -140,8 +141,10 @@ internal sealed class AgentTurnAccounting
             outputTokens,
             cacheUsage.CacheReadTokens,
             cacheUsage.CacheWriteTokens,
-            LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, skillPromptLength),
-            isEstimated: executionResult.Response.Usage is null);
+            isUsageEstimated
+                ? LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, skillPromptLength)
+                : new InputTokenComponentEstimate(),
+            isEstimated: isUsageEstimated);
     }
 
     public void RecordStreamingTurnUsage(
@@ -169,6 +172,7 @@ internal sealed class AgentTurnAccounting
         session.AddTokenUsage(streamResult.InputTokens, streamResult.OutputTokens);
         session.AddCacheUsage(streamResult.CacheReadTokens, streamResult.CacheWriteTokens);
         _recordContractTurnUsage?.Invoke(session, providerId, modelId, streamResult.InputTokens, streamResult.OutputTokens);
+        var isUsageEstimated = streamResult.IsUsageEstimated;
         RecordTurnUsage(
             session,
             providerId,
@@ -177,8 +181,10 @@ internal sealed class AgentTurnAccounting
             streamResult.OutputTokens,
             streamResult.CacheReadTokens,
             streamResult.CacheWriteTokens,
-            LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, skillPromptLength),
-            isEstimated: false);
+            isUsageEstimated
+                ? LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, skillPromptLength)
+                : new InputTokenComponentEstimate(),
+            isEstimated: isUsageEstimated);
     }
 
     public void RecordCompactionUsage(
@@ -204,6 +210,7 @@ internal sealed class AgentTurnAccounting
         _metrics?.AddPromptCacheWrites(cacheUsage.CacheWriteTokens);
         _providerUsage?.AddTokens(executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
         _providerUsage?.AddCacheTokens(executionResult.ProviderId, executionResult.ModelId, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
+        var isUsageEstimated = executionResult.Response.Usage is null;
         RecordTurnUsage(
             session,
             executionResult.ProviderId,
@@ -212,8 +219,10 @@ internal sealed class AgentTurnAccounting
             outputTokens,
             cacheUsage.CacheReadTokens,
             cacheUsage.CacheWriteTokens,
-            LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, skillPromptLength),
-            isEstimated: executionResult.Response.Usage is null);
+            isUsageEstimated
+                ? LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, skillPromptLength)
+                : new InputTokenComponentEstimate(),
+            isEstimated: isUsageEstimated);
     }
 
     private void RecordTurnUsage(

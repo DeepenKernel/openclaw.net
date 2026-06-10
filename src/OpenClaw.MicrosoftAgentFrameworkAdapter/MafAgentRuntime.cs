@@ -742,6 +742,10 @@ public sealed class MafAgentRuntime : IAgentRuntime
             var text = sb.ToString().TrimEnd();
             messages.Insert(Math.Min(1, messages.Count), new ChatMessage(ChatRole.User, text));
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "MAF memory recall injection failed; continuing without recall.");
@@ -822,6 +826,10 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 Role = "system",
                 Content = $"[Previous conversation summary: {summary}]"
             });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

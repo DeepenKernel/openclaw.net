@@ -187,9 +187,15 @@ internal sealed class AgentModelExecutor
 
             llmSw.Stop();
             if (result.InputTokens == 0)
+            {
                 result.InputTokens = LlmExecutionEstimateBuilder.EstimateInputTokens(messages);
+                result.IsUsageEstimated = true;
+            }
             if (result.OutputTokens == 0)
+            {
                 result.OutputTokens = LlmExecutionEstimateBuilder.EstimateTokenCount(result.FullText.Length);
+                result.IsUsageEstimated = true;
+            }
 
             result.ProviderId ??= _config.Provider;
             result.ModelId ??= options.ModelId ?? _config.Model;
@@ -256,6 +262,7 @@ internal sealed class AgentModelExecutor
                 result.OutputTokens = 0;
                 result.CacheReadTokens = 0;
                 result.CacheWriteTokens = 0;
+                result.IsUsageEstimated = false;
             }
         }
 
@@ -270,9 +277,15 @@ internal sealed class AgentModelExecutor
         llmSw.Stop();
 
         if (result.InputTokens == 0)
+        {
             result.InputTokens = LlmExecutionEstimateBuilder.EstimateInputTokens(messages);
+            result.IsUsageEstimated = true;
+        }
         if (result.OutputTokens == 0)
+        {
             result.OutputTokens = LlmExecutionEstimateBuilder.EstimateTokenCount(result.FullText.Length);
+            result.IsUsageEstimated = true;
+        }
 
         result.ProviderId = _config.Provider;
         result.ModelId = options.ModelId ?? _config.Model;

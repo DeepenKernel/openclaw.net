@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Agent.Execution;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
@@ -72,6 +74,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly string? _memoryRecallPrefix;
     private readonly ContextBudgetPlanner? _contextBudgetPlanner;
     private readonly FractalMemoryConfig? _fractalMemory;
+    private readonly ITurnRoutingPolicy _turnRoutingPolicy;
     private readonly object _skillGate = new();
     private string[] _loadedSkillNames = [];
     private IReadOnlyList<SkillDefinition> _loadedSkills = [];
@@ -118,7 +121,8 @@ public sealed class AgentRuntime : IAgentRuntime
         ISentinelSubstitutionService? sentinelSubstitution = null,
         IToolGovernanceService? toolGovernance = null,
         IPlanExecuteVerifyOrchestrator? planExecuteVerify = null,
-        ContextBudgetPlanner? contextBudgetPlanner = null)
+        ContextBudgetPlanner? contextBudgetPlanner = null,
+        ITurnRoutingPolicy? turnRoutingPolicy = null)
     {
         _chatClient = chatClient;
         _tools = tools;
@@ -177,6 +181,7 @@ public sealed class AgentRuntime : IAgentRuntime
         _profilesConfig = profilesConfig;
         _contextBudgetPlanner = contextBudgetPlanner;
         _fractalMemory = gatewayConfig?.Memory.Fractal;
+        _turnRoutingPolicy = turnRoutingPolicy ?? NoopTurnRoutingPolicy.Instance;
         _isContractTokenBudgetExceeded = isContractTokenBudgetExceeded;
         _isContractRuntimeBudgetExceeded = isContractRuntimeBudgetExceeded;
         _recordContractTurnUsage = recordContractTurnUsage;
@@ -286,6 +291,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 resumeCheckpoint.CheckpointId);
         }
 
+            using var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, resumeCheckpoint is not null, responseSchema, ct);
+
         // Build conversation for LLM
         var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null);
         if (resumeCheckpoint is not null)
@@ -367,7 +374,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 return ex.Message;
             }
 
-            catch (Exception ex)
+            catch (Exception ex) when (IsRecoverableLlmException(ex))
             {
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -522,6 +529,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 session.Id,
                 resumeCheckpoint.CheckpointId);
         }
+
+            using var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, resumeCheckpoint is not null, responseSchema: null, ct);
 
         var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null);
         if (resumeCheckpoint is not null)
@@ -842,7 +851,7 @@ public sealed class AgentRuntime : IAgentRuntime
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
             return false;
@@ -951,7 +960,11 @@ public sealed class AgentRuntime : IAgentRuntime
 
             messages.Insert(Math.Min(2, messages.Count), new ChatMessage(ChatRole.User, text));
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
         }
@@ -1052,7 +1065,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 LogTurnComplete(turnCtx);
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsRecoverableLlmException(ex))
             {
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] Streaming LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -1080,11 +1093,9 @@ public sealed class AgentRuntime : IAgentRuntime
         var modelsToTry = new List<string> { currentModel };
         if (_config.FallbackModels is { Length: > 0 })
         {
-            foreach (var fallback in _config.FallbackModels)
-            {
-                if (!string.Equals(fallback, currentModel, StringComparison.OrdinalIgnoreCase))
-                    modelsToTry.Add(fallback);
-            }
+            modelsToTry.AddRange(
+                _config.FallbackModels.Where(fallback =>
+                    !string.Equals(fallback, currentModel, StringComparison.OrdinalIgnoreCase)));
         }
 
         Exception? lastException = null;
@@ -1149,7 +1160,7 @@ public sealed class AgentRuntime : IAgentRuntime
             {
                 throw; // External cancellation, propagate immediately
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsRecoverableLlmException(ex))
             {
                 lastException = ex;
                 _providerUsage?.RecordError(_config.Provider, model);
@@ -1525,12 +1536,29 @@ public sealed class AgentRuntime : IAgentRuntime
                 TrimHistory(session);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "History compaction failed — falling back to simple trim");
             TrimHistory(session);
         }
     }
+
+    private static bool IsRecoverableContextException(Exception ex)
+        => ex is IOException
+            or JsonException
+            or InvalidOperationException
+            or NotSupportedException
+            or TimeoutException
+            or UnauthorizedAccessException
+            or TaskCanceledException;
+
+    private static bool IsRecoverableLlmException(Exception ex)
+        => ex is HttpRequestException
+            or IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or TimeoutException
+            or TaskCanceledException;
 
     private List<ChatMessage> BuildMessages(Session session, bool exactLatestToolBatch = false)
     {
@@ -1820,6 +1848,124 @@ public sealed class AgentRuntime : IAgentRuntime
             return systemPrompt;
 
         return systemPrompt + "\n\n[Route Instructions]\n" + session.SystemPromptOverride.Trim();
+    }
+
+    private async ValueTask<IDisposable> ApplyTurnRoutingAsync(
+        Session session,
+        string userMessage,
+        bool exactLatestToolBatch,
+        JsonElement? responseSchema,
+        CancellationToken ct)
+    {
+        var baseOptions = new ChatOptions
+        {
+            ModelId = session.ModelOverride ?? _config.Model,
+            MaxOutputTokens = _maxTokens,
+            Temperature = _temperature,
+            Tools = _toolExecutor.GetToolDeclarations(session),
+            ResponseFormat = responseSchema.HasValue
+                ? ChatResponseFormat.ForJsonSchema(responseSchema.Value, "response")
+                : null
+        };
+
+        if (!string.IsNullOrWhiteSpace(session.ReasoningEffort))
+        {
+            baseOptions.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+            baseOptions.AdditionalProperties["reasoning_effort"] = session.ReasoningEffort;
+        }
+
+        var decision = await _turnRoutingPolicy.ResolveAsync(new TurnRoutingRequest
+        {
+            Session = session,
+            Messages = BuildMessages(session, exactLatestToolBatch),
+            UserMessage = userMessage,
+            BaseOptions = baseOptions
+        }, ct);
+
+        var snapshot = new TurnRoutingSnapshot(
+            session.ModelProfileId,
+            session.PreferredModelTags,
+            session.FallbackModelProfileIds,
+            session.SystemPromptOverride,
+            session.RouteAllowedTools,
+            session.RouteToolsDisabled,
+            session.RouteModelTier,
+            session.RouteReason,
+            session.ReasoningEffort,
+            session.ResponseMode);
+
+        if (!string.IsNullOrWhiteSpace(decision.ModelProfileId))
+            session.ModelProfileId = decision.ModelProfileId;
+
+        if (!string.IsNullOrWhiteSpace(decision.DirectModelFallbackProfileId))
+        {
+            var fallback = decision.DirectModelFallbackProfileId!;
+            session.FallbackModelProfileIds =
+            [
+                fallback,
+                .. session.FallbackModelProfileIds.Where(item => !string.Equals(item, fallback, StringComparison.OrdinalIgnoreCase))
+            ];
+        }
+
+        if (decision.PreferredTags.Length > 0)
+            session.PreferredModelTags = decision.PreferredTags;
+        if (!string.IsNullOrWhiteSpace(decision.ReasoningLevel))
+            session.ReasoningEffort = decision.ReasoningLevel;
+        if (!string.IsNullOrWhiteSpace(decision.ResponsePolicy))
+            session.ResponseMode = decision.ResponsePolicy;
+        if (decision.DisableTools)
+        {
+            session.RouteToolsDisabled = true;
+            session.RouteAllowedTools = [];
+        }
+        else if (decision.AllowedTools.Length > 0)
+        {
+            session.RouteAllowedTools = decision.AllowedTools;
+        }
+        session.RouteModelTier = decision.Tier;
+        session.RouteReason = decision.Reason;
+        session.SystemPromptOverride = CombineSystemPromptOverride(snapshot.SystemPromptOverride, decision.SystemPromptSuffix);
+
+        return new TurnRoutingRestoreScope(session, snapshot);
+    }
+
+    private static string? CombineSystemPromptOverride(string? original, string? suffix)
+    {
+        if (string.IsNullOrWhiteSpace(suffix))
+            return original;
+
+        if (string.IsNullOrWhiteSpace(original))
+            return suffix.Trim();
+
+        return original.Trim() + "\n" + suffix.Trim();
+    }
+
+    private readonly record struct TurnRoutingSnapshot(
+        string? ModelProfileId,
+        string[] PreferredModelTags,
+        string[] FallbackModelProfileIds,
+        string? SystemPromptOverride,
+        string[] RouteAllowedTools,
+        bool RouteToolsDisabled,
+        string? RouteModelTier,
+        string? RouteReason,
+        string? ReasoningEffort,
+        string ResponseMode);
+
+    private sealed class TurnRoutingRestoreScope(Session session, TurnRoutingSnapshot snapshot) : IDisposable
+    {
+        public void Dispose()
+        {
+            session.ModelProfileId = snapshot.ModelProfileId;
+            session.PreferredModelTags = snapshot.PreferredModelTags;
+            session.FallbackModelProfileIds = snapshot.FallbackModelProfileIds;
+            session.SystemPromptOverride = snapshot.SystemPromptOverride;
+            session.RouteAllowedTools = snapshot.RouteAllowedTools;
+            session.RouteToolsDisabled = snapshot.RouteToolsDisabled;
+            session.RouteReason = snapshot.RouteReason;
+            session.ReasoningEffort = snapshot.ReasoningEffort;
+            session.ResponseMode = snapshot.ResponseMode;
+        }
     }
 
     private static IList<AIContent> BuildTurnContents(string content)

@@ -1,4 +1,5 @@
 using OpenClaw.Core.Observability;
+using System.Text.Json;
 using Xunit;
 
 namespace OpenClaw.Tests;
@@ -249,5 +250,71 @@ public sealed class ObservabilityTests
         Assert.Equal(1, snapshot.Errors);
         Assert.Equal(12, snapshot.InputTokens);
         Assert.Equal(34, snapshot.OutputTokens);
+    }
+
+    [Fact]
+    public void ProviderUsageTurnTokenUsageObserver_RecordsRecentTurn()
+    {
+        var tracker = new ProviderUsageTracker();
+        var observer = new ProviderUsageTurnTokenUsageObserver(tracker);
+
+        observer.RecordTurn(new OpenClaw.Core.Models.TurnTokenUsageRecord
+        {
+            SessionId = "session-1",
+            ChannelId = "ws",
+            ProviderId = "openai",
+            ModelId = "gpt-4o",
+            InputTokens = 42,
+            OutputTokens = 24,
+            CacheReadTokens = 5,
+            CacheWriteTokens = 7,
+            EstimatedInputTokensByComponent = new OpenClaw.Core.Models.InputTokenComponentEstimate(),
+            IsEstimated = false
+        });
+
+        var turn = Assert.Single(tracker.RecentTurns("session-1"));
+        Assert.Equal("openai", turn.ProviderId);
+        Assert.Equal("gpt-4o", turn.ModelId);
+        Assert.Equal(42, turn.InputTokens);
+        Assert.Equal(24, turn.OutputTokens);
+        Assert.Equal(5, turn.CacheReadTokens);
+        Assert.Equal(7, turn.CacheWriteTokens);
+    }
+
+    [Fact]
+    public void TurnTokenUsageAuditLog_AppendsJsonLine()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "openclaw-turn-token-audit-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var filePath = Path.Combine(root, "turn-token-usage.jsonl");
+
+        try
+        {
+            var observer = new TurnTokenUsageAuditLog(filePath);
+            observer.RecordTurn(new OpenClaw.Core.Models.TurnTokenUsageRecord
+            {
+                SessionId = "session-1",
+                ChannelId = "ws",
+                ProviderId = "openai",
+                ModelId = "gpt-4o",
+                InputTokens = 11,
+                OutputTokens = 22,
+                CacheReadTokens = 3,
+                CacheWriteTokens = 4,
+                EstimatedInputTokensByComponent = new OpenClaw.Core.Models.InputTokenComponentEstimate(),
+                IsEstimated = false
+            });
+
+            var line = Assert.Single(File.ReadAllLines(filePath));
+            var record = JsonSerializer.Deserialize<OpenClaw.Core.Models.TurnTokenUsageRecord>(line);
+            Assert.NotNull(record);
+            Assert.Equal("session-1", record!.SessionId);
+            Assert.Equal(11, record.InputTokens);
+            Assert.Equal(22, record.OutputTokens);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }

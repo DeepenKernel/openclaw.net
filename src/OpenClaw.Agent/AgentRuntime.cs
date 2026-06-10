@@ -55,6 +55,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly CircuitBreaker _circuitBreaker;
     private readonly RuntimeMetrics? _metrics;
     private readonly ProviderUsageTracker? _providerUsage;
+    private readonly ITurnTokenUsageObserver? _turnTokenUsageObserver;
     private readonly ILlmExecutionService? _llmExecutionService;
     private readonly long _sessionTokenBudget;
     private readonly bool _estimateTokenBudgetAdmission;
@@ -94,6 +95,7 @@ public sealed class AgentRuntime : IAgentRuntime
         int toolTimeoutSeconds = 30,
         RuntimeMetrics? metrics = null,
         ProviderUsageTracker? providerUsage = null,
+        ITurnTokenUsageObserver? turnTokenUsageObserver = null,
         ILlmExecutionService? llmExecutionService = null,
         bool parallelToolExecution = true,
         bool enableCompaction = false,
@@ -145,6 +147,7 @@ public sealed class AgentRuntime : IAgentRuntime
         _hooks = hooks ?? [];
         _metrics = metrics;
         _providerUsage = providerUsage;
+        _turnTokenUsageObserver = turnTokenUsageObserver;
         _llmExecutionService = llmExecutionService;
         _skillsConfig = skillsConfig;
         _skillWorkspacePath = skillWorkspacePath;
@@ -403,21 +406,21 @@ public sealed class AgentRuntime : IAgentRuntime
             _metrics?.AddPromptCacheWrites(cacheUsage.CacheWriteTokens);
             _providerUsage?.AddTokens(executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
             _providerUsage?.AddCacheTokens(executionResult.ProviderId, executionResult.ModelId, cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
-            _providerUsage?.RecordTurn(
-                session.Id,
-                session.ChannelId,
+
+            // Track token usage on the session
+            session.AddTokenUsage(inputTokens, outputTokens);
+            session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
+            _recordContractTurnUsage?.Invoke(session, executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
+            RecordTurnUsage(
+                session,
                 executionResult.ProviderId,
                 executionResult.ModelId,
                 inputTokens,
                 outputTokens,
                 cacheUsage.CacheReadTokens,
                 cacheUsage.CacheWriteTokens,
-                LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, _skillPromptLength));
-
-            // Track token usage on the session
-            session.AddTokenUsage(inputTokens, outputTokens);
-            session.AddCacheUsage(cacheUsage.CacheReadTokens, cacheUsage.CacheWriteTokens);
-            _recordContractTurnUsage?.Invoke(session, executionResult.ProviderId, executionResult.ModelId, inputTokens, outputTokens);
+                LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, inputTokens, _skillPromptLength),
+                isEstimated: response.Usage is null);
 
             if (TryRejectContractBudget(session, out contractBudgetMessage))
             {
@@ -616,16 +619,16 @@ public sealed class AgentRuntime : IAgentRuntime
                 _recordContractTurnUsage?.Invoke(session, streamResult.ProviderId, streamResult.ModelId, streamResult.InputTokens, streamResult.OutputTokens);
             if (!string.IsNullOrWhiteSpace(streamResult.ProviderId) && !string.IsNullOrWhiteSpace(streamResult.ModelId))
             {
-                _providerUsage?.RecordTurn(
-                    session.Id,
-                    session.ChannelId,
+                RecordTurnUsage(
+                    session,
                     streamResult.ProviderId,
                     streamResult.ModelId,
                     streamResult.InputTokens,
                     streamResult.OutputTokens,
                     streamResult.CacheReadTokens,
                     streamResult.CacheWriteTokens,
-                    LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, _skillPromptLength));
+                    LlmExecutionEstimateBuilder.BuildInputTokenEstimate(messages, streamResult.InputTokens, _skillPromptLength),
+                    isEstimated: false);
             }
 
             if (TryRejectContractBudget(session, out contractBudgetMessage))
@@ -773,6 +776,49 @@ public sealed class AgentRuntime : IAgentRuntime
         MarkCheckpointCompleted(session, SessionCheckpointStates.Failed, "max_iterations");
         AppendContractSnapshot(session, "active");
         LogTurnComplete(turnCtx);
+    }
+
+    private void RecordTurnUsage(
+        Session session,
+        string providerId,
+        string modelId,
+        long inputTokens,
+        long outputTokens,
+        long cacheReadTokens,
+        long cacheWriteTokens,
+        InputTokenComponentEstimate estimatedInputTokensByComponent,
+        bool isEstimated)
+    {
+        var record = new TurnTokenUsageRecord
+        {
+            SessionId = session.Id,
+            ChannelId = session.ChannelId,
+            ProviderId = providerId,
+            ModelId = modelId,
+            InputTokens = inputTokens,
+            OutputTokens = outputTokens,
+            CacheReadTokens = cacheReadTokens,
+            CacheWriteTokens = cacheWriteTokens,
+            EstimatedInputTokensByComponent = estimatedInputTokensByComponent,
+            IsEstimated = isEstimated
+        };
+
+        if (_turnTokenUsageObserver is not null)
+        {
+            _turnTokenUsageObserver.RecordTurn(record);
+            return;
+        }
+
+        _providerUsage?.RecordTurn(
+            record.SessionId,
+            record.ChannelId,
+            record.ProviderId,
+            record.ModelId,
+            record.InputTokens,
+            record.OutputTokens,
+            record.CacheReadTokens,
+            record.CacheWriteTokens,
+            record.EstimatedInputTokensByComponent);
     }
 
     private static AgentStreamEvent CreateToolCompletedEvent(ToolInvocation invocation) =>

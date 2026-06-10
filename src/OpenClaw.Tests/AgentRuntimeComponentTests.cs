@@ -664,6 +664,7 @@ public sealed class AgentRuntimeComponentTests
             config,
             sessionTokenBudget,
             estimateTokenBudgetAdmission,
+            turnTokenUsageObserver: null,
             circuitState: () => CircuitState.Closed,
             isContractTokenBudgetExceeded: null,
             isContractRuntimeBudgetExceeded: null,

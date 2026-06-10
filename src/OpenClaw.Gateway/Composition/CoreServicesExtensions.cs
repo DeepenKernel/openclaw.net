@@ -119,6 +119,14 @@ internal static class CoreServicesExtensions
         });
         AddFeatureStores(services, config);
         services.AddSingleton<ProviderUsageTracker>();
+        services.AddSingleton(sp => new TurnTokenUsageAuditLog(
+            Path.Combine(Path.GetFullPath(config.Memory.StoragePath), "audit", "turn-token-usage.jsonl"),
+            sp.GetRequiredService<ILogger<TurnTokenUsageAuditLog>>()));
+        services.AddSingleton<ITurnTokenUsageObserver>(sp =>
+            new CompositeTurnTokenUsageObserver([
+                new ProviderUsageTurnTokenUsageObserver(sp.GetRequiredService<ProviderUsageTracker>()),
+                sp.GetRequiredService<TurnTokenUsageAuditLog>()
+            ]));
         services.AddSingleton<ToolUsageTracker>();
         services.AddSingleton<ProviderSmokeRegistry>();
         services.AddSingleton<StartupNoticeCollector>();

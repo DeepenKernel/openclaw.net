@@ -42,6 +42,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly long _sessionTokenBudget;
     private readonly MemoryRecallConfig? _recall;
     private readonly bool _requireToolApproval;
+    private readonly ITurnTokenUsageObserver? _turnTokenUsageObserver;
     private readonly Action<Session, string, string, long, long>? _recordContractTurnUsage;
     private readonly Func<Session, bool>? _isContractTokenBudgetExceeded;
     private readonly Func<Session, bool>? _isContractRuntimeBudgetExceeded;
@@ -100,6 +101,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         _sessionTokenBudget = context.Config.SessionTokenBudget;
         _recall = context.Config.Memory.Recall;
         _requireToolApproval = context.RequireToolApproval;
+        _turnTokenUsageObserver = context.TurnTokenUsageObserver;
         _recordContractTurnUsage = context.RecordContractTurnUsage;
         _isContractTokenBudgetExceeded = context.IsContractTokenBudgetExceeded;
         _isContractRuntimeBudgetExceeded = context.IsContractRuntimeBudgetExceeded;
@@ -226,6 +228,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 SkillPromptLength = _skillPromptLength,
                 SessionTokenBudget = _sessionTokenBudget,
                 ToolInvocations = toolInvocations,
+                TurnTokenUsageObserver = _turnTokenUsageObserver,
                 RecordContractTurnUsage = _recordContractTurnUsage,
                 ApprovalCallback = approvalCallback
             });

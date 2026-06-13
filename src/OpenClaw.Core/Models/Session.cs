@@ -378,6 +378,210 @@ public sealed class MetaRunReplayStepReadinessPreview
     public required string Reason { get; init; }
 }
 
+public sealed class MetaRunReplayResultResponse
+{
+    public required string SessionId { get; init; }
+    public required string RunId { get; init; }
+    public required string SkillName { get; init; }
+    public string Mode { get; init; } = MetaRunReplayExecutionModes.AuditReconstruction;
+    public required string Status { get; init; }
+    public string Source { get; init; } = MetaRunReplayExecutionSources.HistoryOnly;
+    public string? FinalText { get; init; }
+    public string? Error { get; init; }
+    public string? ErrorCode { get; init; }
+    public MetaRunReplayTimelineItem[] Timeline { get; init; } = [];
+    public MetaRunReplayCheckpointSummary? Checkpoint { get; init; }
+    public MetaRunProposalSummary ProposalSummary { get; init; } = new();
+}
+
+public sealed class MetaRunReplayTimelineItem
+{
+    public int Sequence { get; init; }
+    public required string StepId { get; init; }
+    public required string Kind { get; init; }
+    public required string Status { get; init; }
+    public string? FailureCode { get; init; }
+    public double DurationMs { get; init; }
+    public bool Continued { get; init; }
+    public string Source { get; init; } = MetaRunReplayTimelineSources.RunHistory;
+    public string? Notes { get; init; }
+}
+
+public sealed class MetaRunReplayCheckpointSummary
+{
+    public required string PendingStepId { get; init; }
+    public string[] PendingStepIds { get; init; } = [];
+    public string[] BlockedStepIds { get; init; } = [];
+    public bool PromptPresent { get; init; }
+    public string[] OutputStepIds { get; init; } = [];
+    public string[] FailureAliasStepIds { get; init; } = [];
+}
+
+public sealed class MetaRunProposalSummary
+{
+    public bool Available { get; init; }
+    public int Count { get; init; }
+    public string[] Kinds { get; init; } = [];
+    public string Reason { get; init; } = MetaRunProposalReasons.NotImplemented;
+}
+
+public sealed class MetaRunDerivedProposalListResponse
+{
+    public required string SessionId { get; init; }
+    public int Count { get; init; }
+    public MetaRunDerivedProposalSummary[] Proposals { get; init; } = [];
+}
+
+public sealed class MetaRunDerivedProposalSummary
+{
+    public required string Id { get; init; }
+    public required string RunId { get; init; }
+    public required string SkillName { get; init; }
+    public required string Status { get; init; }
+    public required string Kind { get; init; }
+    public required string Title { get; init; }
+    public required string Summary { get; init; }
+    public string Source { get; init; } = MetaRunProposalSources.DerivedMetaRunEvidence;
+    public string[] AvailableActions { get; init; } = [MetaRunProposalActions.Show];
+    public string ReviewStatus { get; init; } = MetaRunProposalReviewStatuses.Pending;
+    public DateTimeOffset? ReviewedAtUtc { get; init; }
+}
+
+public sealed class MetaRunDerivedProposalDetailResponse
+{
+    public required string SessionId { get; init; }
+    public required MetaRunDerivedProposalDetail Proposal { get; init; }
+}
+
+public sealed class MetaRunDerivedProposalDetail
+{
+    public required string Id { get; init; }
+    public required string RunId { get; init; }
+    public required string SkillName { get; init; }
+    public required string Status { get; init; }
+    public required string Kind { get; init; }
+    public required string Title { get; init; }
+    public required string Summary { get; init; }
+    public string Source { get; init; } = MetaRunProposalSources.DerivedMetaRunEvidence;
+    public string[] AvailableActions { get; init; } = [MetaRunProposalActions.Show];
+    // Prefer grouped detail for new consumers; the flat fields below remain as compatibility mirrors.
+    public MetaRunDerivedProposalCheckpointDetail? Checkpoint { get; init; }
+    public MetaRunDerivedProposalEvidenceDetail? Evidence { get; init; }
+    public MetaRunProposalReviewDetail? Review { get; init; }
+    public string? PendingStepId { get; init; }
+    public string[] PendingStepIds { get; init; } = [];
+    public string[] BlockedStepIds { get; init; } = [];
+    public string[] TimelineStepIds { get; init; } = [];
+    public MetaRunDerivedProposalStepDetail[] Steps { get; init; } = [];
+    public string? ErrorCode { get; init; }
+    public string? Error { get; init; }
+    public string? FinalText { get; init; }
+}
+
+public sealed class MetaRunProposalReviewRecord
+{
+    public required string SessionId { get; init; }
+    public required string ProposalId { get; init; }
+    public required string ReviewStatus { get; init; }
+    public string? Reason { get; init; }
+    public DateTimeOffset ReviewedAtUtc { get; init; } = DateTimeOffset.UtcNow;
+    public string? ReviewedBy { get; init; }
+}
+
+public sealed class MetaRunProposalReviewMutationResponse
+{
+    public required string SessionId { get; init; }
+    public required string ProposalId { get; init; }
+    public required string ReviewStatus { get; init; }
+    public bool AlreadyReviewed { get; init; }
+    public DateTimeOffset ReviewedAtUtc { get; init; }
+    public string? Reason { get; init; }
+}
+
+public sealed class MetaRunProposalReviewDetail
+{
+    public required string Status { get; init; }
+    public required DateTimeOffset ReviewedAtUtc { get; init; }
+    public string? Reason { get; init; }
+}
+
+public sealed class MetaRunDerivedProposalCheckpointDetail
+{
+    // Canonical grouped checkpoint detail for operator-facing proposal inspection.
+    public required string PendingStepId { get; init; }
+    public string[] PendingStepIds { get; init; } = [];
+    public string[] BlockedStepIds { get; init; } = [];
+    public bool PromptPresent { get; init; }
+    public string[] OutputStepIds { get; init; } = [];
+    public string[] FailureAliasStepIds { get; init; } = [];
+}
+
+public sealed class MetaRunDerivedProposalEvidenceDetail
+{
+    // Canonical grouped run-level evidence for operator-facing proposal inspection.
+    public string[] TimelineStepIds { get; init; } = [];
+    public string? ErrorCode { get; init; }
+    public string? Error { get; init; }
+    public string? FinalText { get; init; }
+}
+
+public sealed class MetaRunDerivedProposalStepDetail
+{
+    public required string Id { get; init; }
+    public required string Kind { get; init; }
+    public required string Status { get; init; }
+    public string? FailureCode { get; init; }
+    public double DurationMs { get; init; }
+    public bool Continued { get; init; }
+}
+
+public static class MetaRunReplayExecutionModes
+{
+    public const string AuditReconstruction = "audit_reconstruction";
+}
+
+public static class MetaRunReplayExecutionSources
+{
+    public const string HistoryOnly = "history_only";
+    public const string HistoryPlusCheckpoint = "history_plus_checkpoint";
+}
+
+public static class MetaRunReplayTimelineSources
+{
+    public const string RunHistory = "run_history";
+    public const string Checkpoint = "checkpoint";
+}
+
+public static class MetaRunProposalReasons
+{
+    public const string NotImplemented = "proposal_workflow_not_implemented";
+}
+
+public static class MetaRunProposalSources
+{
+    public const string DerivedMetaRunEvidence = "derived_meta_run_evidence";
+}
+
+public static class MetaRunProposalActions
+{
+    public const string Show = "show";
+    public const string Accept = "accept";
+    public const string Dismiss = "dismiss";
+}
+
+public static class MetaRunProposalReviewStatuses
+{
+    public const string Pending = "pending";
+    public const string Accepted = "accepted";
+    public const string Dismissed = "dismissed";
+}
+
+public static class MetaRunProposalKinds
+{
+    public const string PausedRunFollowup = "paused_run_followup";
+    public const string FailedRunReview = "failed_run_review";
+}
+
 public sealed class SessionDelegationMetadata
 {
     public string? ParentSessionId { get; set; }
@@ -448,6 +652,11 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(MetaRunReplayPlanPreview))]
 [JsonSerializable(typeof(MetaRunReplayStepReadinessPreview))]
 [JsonSerializable(typeof(MetaRunReplayStepReadinessPreview[]))]
+[JsonSerializable(typeof(MetaRunReplayResultResponse))]
+[JsonSerializable(typeof(MetaRunReplayTimelineItem))]
+[JsonSerializable(typeof(MetaRunReplayTimelineItem[]))]
+[JsonSerializable(typeof(MetaRunReplayCheckpointSummary))]
+[JsonSerializable(typeof(MetaRunProposalSummary))]
 [JsonSerializable(typeof(SessionDelegationMetadata))]
 [JsonSerializable(typeof(SessionDelegationToolUsage))]
 [JsonSerializable(typeof(List<SessionDelegationToolUsage>))]
@@ -457,6 +666,19 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(List<SessionDelegationChildSummary>))]
 [JsonSerializable(typeof(InboundMessage))]
 [JsonSerializable(typeof(OutboundMessage))]
+[JsonSerializable(typeof(MetaRunDerivedProposalListResponse))]
+[JsonSerializable(typeof(MetaRunDerivedProposalSummary))]
+[JsonSerializable(typeof(MetaRunDerivedProposalSummary[]))]
+[JsonSerializable(typeof(MetaRunDerivedProposalDetailResponse))]
+[JsonSerializable(typeof(MetaRunDerivedProposalDetail))]
+[JsonSerializable(typeof(MetaRunDerivedProposalCheckpointDetail))]
+[JsonSerializable(typeof(MetaRunDerivedProposalEvidenceDetail))]
+[JsonSerializable(typeof(MetaRunProposalReviewRecord))]
+[JsonSerializable(typeof(MetaRunProposalReviewRecord[]))]
+[JsonSerializable(typeof(MetaRunProposalReviewMutationResponse))]
+[JsonSerializable(typeof(MetaRunProposalReviewDetail))]
+[JsonSerializable(typeof(MetaRunDerivedProposalStepDetail))]
+[JsonSerializable(typeof(MetaRunDerivedProposalStepDetail[]))]
 [JsonSerializable(typeof(WsClientEnvelope))]
 [JsonSerializable(typeof(WsServerEnvelope))]
 [JsonSerializable(typeof(GatewayConfig))]

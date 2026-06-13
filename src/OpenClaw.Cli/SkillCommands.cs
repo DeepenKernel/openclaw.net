@@ -36,6 +36,10 @@ internal static class SkillCommands
     {
         if (args.Length > 0 && string.Equals(args[0], "replay", StringComparison.OrdinalIgnoreCase))
             return await PreviewMetaRunReplayAsync(args.Skip(1).ToArray());
+        if (args.Length > 0 && string.Equals(args[0], "reconstruct", StringComparison.OrdinalIgnoreCase))
+            return await ReconstructMetaRunReplayAsync(args.Skip(1).ToArray());
+        if (args.Length > 0 && string.Equals(args[0], "proposals", StringComparison.OrdinalIgnoreCase))
+            return await HandleMetaRunProposalsAsync(args.Skip(1).ToArray());
 
         var asJson = args.Contains("--json");
         var verbose = args.Contains("--verbose");
@@ -129,6 +133,327 @@ internal static class SkillCommands
                 {
                     Console.WriteLine();
                 }
+            }
+
+            return 0;
+        }
+        finally
+        {
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static Task<int> HandleMetaRunProposalsAsync(string[] args)
+    {
+        if (args.Length > 0 && string.Equals(args[0], "accept", StringComparison.OrdinalIgnoreCase))
+            return ReviewMetaRunProposalAsync(args.Skip(1).ToArray(), MetaRunProposalReviewStatuses.Accepted, allowReason: false);
+        if (args.Length > 0 && string.Equals(args[0], "dismiss", StringComparison.OrdinalIgnoreCase))
+            return ReviewMetaRunProposalAsync(args.Skip(1).ToArray(), MetaRunProposalReviewStatuses.Dismissed, allowReason: true);
+        if (args.Length > 0 && string.Equals(args[0], "show", StringComparison.OrdinalIgnoreCase))
+            return ShowMetaRunProposalAsync(args.Skip(1).ToArray());
+
+        return ListMetaRunProposalsAsync(args);
+    }
+
+    private static async Task<int> ListMetaRunProposalsAsync(string[] args)
+    {
+        var asJson = args.Contains("--json");
+        var requestedRunId = GetOptionValue(args, "--run");
+        var sessionId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            Console.Error.WriteLine("Usage: openclaw skills meta-runs proposals <session-id> [--run <run-id>] [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var storagePath = GetOptionValue(args, "--storage");
+        var resolvedMemoryPath = ResolveMemoryPath(storagePath);
+        var reviewStore = new MetaRunProposalReviewStore(ResolveProposalReviewRootPath(resolvedMemoryPath));
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+            if (session is null)
+            {
+                Console.Error.WriteLine($"Session '{sessionId}' not found.");
+                return 1;
+            }
+
+            var proposals = BuildDerivedProposals(session, requestedRunId);
+            if (!string.IsNullOrWhiteSpace(requestedRunId)
+                && !session.MetaRunHistory.Any(run => string.Equals(run.RunId, requestedRunId, StringComparison.Ordinal)))
+            {
+                Console.Error.WriteLine($"Run '{requestedRunId}' not found in session '{sessionId}'.");
+                return 1;
+            }
+
+            var reviews = await reviewStore.LoadBySessionAsync(sessionId, CancellationToken.None);
+            proposals = ApplyReviewSummary(proposals, reviews);
+
+            var response = new MetaRunDerivedProposalListResponse
+            {
+                SessionId = sessionId,
+                Count = proposals.Length,
+                Proposals = proposals
+            };
+
+            if (asJson)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(response, CoreJsonContext.Default.MetaRunDerivedProposalListResponse));
+            }
+            else
+            {
+                WriteDerivedProposalListText(response);
+            }
+
+            return 0;
+        }
+        finally
+        {
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static async Task<int> ShowMetaRunProposalAsync(string[] args)
+    {
+        var asJson = args.Contains("--json");
+        var sessionId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            Console.Error.WriteLine("Usage: openclaw skills meta-runs proposals show <session-id> --proposal <id> [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var proposalId = GetOptionValue(args, "--proposal");
+        if (string.IsNullOrWhiteSpace(proposalId))
+        {
+            Console.Error.WriteLine("--proposal <id> is required for meta-runs proposals show.");
+            return 2;
+        }
+
+        var storagePath = GetOptionValue(args, "--storage");
+        var resolvedMemoryPath = ResolveMemoryPath(storagePath);
+        var reviewStore = new MetaRunProposalReviewStore(ResolveProposalReviewRootPath(resolvedMemoryPath));
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+            if (session is null)
+            {
+                Console.Error.WriteLine($"Session '{sessionId}' not found.");
+                return 1;
+            }
+
+            var summary = BuildDerivedProposals(session, requestedRunId: null)
+                .FirstOrDefault(item => string.Equals(item.Id, proposalId, StringComparison.Ordinal));
+            if (summary is null)
+            {
+                Console.Error.WriteLine($"Proposal '{proposalId}' not found in session '{sessionId}'.");
+                return 1;
+            }
+
+            var run = session.MetaRunHistory.First(run => string.Equals(run.RunId, summary.RunId, StringComparison.Ordinal));
+            var review = await reviewStore.GetAsync(sessionId, summary.Id, CancellationToken.None);
+            var detail = new MetaRunDerivedProposalDetailResponse
+            {
+                SessionId = sessionId,
+                Proposal = ApplyReviewDetail(BuildDerivedProposalDetail(summary, run, session.MetaExecutionCheckpoint), review)
+            };
+
+            if (asJson)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(detail, CoreJsonContext.Default.MetaRunDerivedProposalDetailResponse));
+            }
+            else
+            {
+                WriteDerivedProposalDetailText(detail);
+            }
+
+            return 0;
+        }
+        finally
+        {
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static async Task<int> ReviewMetaRunProposalAsync(string[] args, string targetStatus, bool allowReason)
+    {
+        var asJson = args.Contains("--json");
+        var sessionId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        var action = string.Equals(targetStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal)
+            ? "accept"
+            : "dismiss";
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            Console.Error.WriteLine($"Usage: openclaw skills meta-runs proposals {action} <session-id> --proposal <id> [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var proposalId = GetOptionValue(args, "--proposal");
+        if (string.IsNullOrWhiteSpace(proposalId))
+        {
+            Console.Error.WriteLine($"--proposal <id> is required for meta-runs proposals {action}.");
+            return 2;
+        }
+
+        var reason = GetOptionValue(args, "--reason");
+        if (!allowReason && !string.IsNullOrWhiteSpace(reason))
+        {
+            Console.Error.WriteLine("--reason is only supported for meta-runs proposals dismiss.");
+            return 2;
+        }
+
+        var storagePath = GetOptionValue(args, "--storage");
+        var resolvedMemoryPath = ResolveMemoryPath(storagePath);
+        var reviewStore = new MetaRunProposalReviewStore(ResolveProposalReviewRootPath(resolvedMemoryPath));
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+            if (session is null)
+            {
+                Console.Error.WriteLine($"Session '{sessionId}' not found.");
+                return 1;
+            }
+
+            var proposal = BuildDerivedProposals(session, requestedRunId: null)
+                .FirstOrDefault(item => string.Equals(item.Id, proposalId, StringComparison.Ordinal));
+            if (proposal is null)
+            {
+                Console.Error.WriteLine($"Proposal '{proposalId}' not found in session '{sessionId}'.");
+                return 1;
+            }
+
+            var existing = await reviewStore.GetAsync(sessionId, proposalId, CancellationToken.None);
+            var alreadyReviewed = false;
+            MetaRunProposalReviewRecord record;
+            if (existing is null)
+            {
+                record = new MetaRunProposalReviewRecord
+                {
+                    SessionId = sessionId,
+                    ProposalId = proposalId,
+                    ReviewStatus = targetStatus,
+                    Reason = allowReason ? reason : null,
+                    ReviewedAtUtc = DateTimeOffset.UtcNow
+                };
+
+                await reviewStore.SaveAsync(record, CancellationToken.None);
+            }
+            else if (string.Equals(existing.ReviewStatus, targetStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                alreadyReviewed = true;
+                record = existing;
+            }
+            else
+            {
+                Console.Error.WriteLine($"Proposal '{proposalId}' in session '{sessionId}' is already reviewed as {existing.ReviewStatus}.");
+                return 1;
+            }
+
+            var response = new MetaRunProposalReviewMutationResponse
+            {
+                SessionId = sessionId,
+                ProposalId = proposalId,
+                ReviewStatus = record.ReviewStatus,
+                AlreadyReviewed = alreadyReviewed,
+                ReviewedAtUtc = record.ReviewedAtUtc,
+                Reason = record.Reason
+            };
+
+            if (asJson)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(response, CoreJsonContext.Default.MetaRunProposalReviewMutationResponse));
+            }
+            else
+            {
+                WriteProposalReviewMutationText(response);
+            }
+
+            return 0;
+        }
+        finally
+        {
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static async Task<int> ReconstructMetaRunReplayAsync(string[] args)
+    {
+        var asJson = args.Contains("--json");
+        var sessionId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            Console.Error.WriteLine("Usage: openclaw skills meta-runs reconstruct <session-id> --run <run-id> [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var requestedRunId = GetOptionValue(args, "--run");
+        if (string.IsNullOrWhiteSpace(requestedRunId))
+        {
+            Console.Error.WriteLine("--run <run-id> is required for meta-runs reconstruct.");
+            return 2;
+        }
+
+        var storagePath = GetOptionValue(args, "--storage");
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+            if (session is null)
+            {
+                Console.Error.WriteLine($"Session '{sessionId}' not found.");
+                return 1;
+            }
+
+            var run = session.MetaRunHistory.FirstOrDefault(run => string.Equals(run.RunId, requestedRunId, StringComparison.Ordinal));
+            if (run is null)
+            {
+                Console.Error.WriteLine($"Run '{requestedRunId}' not found in session '{sessionId}'.");
+                return 1;
+            }
+
+            var replay = BuildReplayResult(sessionId, run, session.MetaExecutionCheckpoint);
+            if (asJson)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(replay, CoreJsonContext.Default.MetaRunReplayResultResponse));
+            }
+            else
+            {
+                WriteReplayResultText(replay);
             }
 
             return 0;
@@ -532,6 +857,19 @@ internal static class SkillCommands
         return Path.GetFullPath("./memory");
     }
 
+    private static string ResolveProposalReviewRootPath(string resolvedMemoryPath)
+    {
+        if (!LooksLikeSqlitePath(resolvedMemoryPath))
+            return resolvedMemoryPath;
+
+        var directory = Path.GetDirectoryName(resolvedMemoryPath);
+        var baseName = Path.GetFileNameWithoutExtension(resolvedMemoryPath);
+        if (string.IsNullOrWhiteSpace(directory))
+            directory = Path.GetFullPath(".");
+
+        return Path.Combine(directory, $"{baseName}.memory");
+    }
+
     private static bool LooksLikeSqlitePath(string path)
     {
         var extension = Path.GetExtension(path);
@@ -628,6 +966,11 @@ internal static class SkillCommands
               openclaw skills list [--workdir <path> | --managed]
                             openclaw skills meta-runs <session-id> [--storage <path>] [--limit <count>] [--run <run-id>] [--verbose] [--json]
                             openclaw skills meta-runs replay <session-id> --run <run-id> [--storage <path>] [--json]
+                            openclaw skills meta-runs reconstruct <session-id> --run <run-id> [--storage <path>] [--json]
+                            openclaw skills meta-runs proposals <session-id> [--run <run-id>] [--storage <path>] [--json]
+                            openclaw skills meta-runs proposals show <session-id> --proposal <id> [--storage <path>] [--json]
+                            openclaw skills meta-runs proposals accept <session-id> --proposal <id> [--storage <path>] [--json]
+                            openclaw skills meta-runs proposals dismiss <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
 
             Notes:
               - Remote registry installs still go through `openclaw clawhub`.
@@ -637,6 +980,10 @@ internal static class SkillCommands
                             - `meta-runs --verbose` expands per-step trace summaries for each persisted run.
                             - `meta-runs --json` emits machine-readable output for operators and scripts.
                             - `meta-runs replay` is currently preview-only and reports whether persisted run history is sufficient for replay.
+                                - `meta-runs reconstruct` builds an audit replay result from persisted run history and optional checkpoint state without re-executing tools or models.
+                                - `meta-runs proposals` returns derived read-only proposal summaries from persisted meta-run evidence.
+                                - `meta-runs proposals show` expands a single derived proposal without implying durable lifecycle state.
+                                - `meta-runs proposals accept|dismiss` records review decisions only; it does not execute tools, models, or replay.
             """);
     }
 
@@ -660,6 +1007,290 @@ internal static class SkillCommands
                 Console.WriteLine(System.Text.Encoding.UTF8.GetString(stream.ToArray()));
         }
 
+    private static MetaRunDerivedProposalSummary[] BuildDerivedProposals(Session session, string? requestedRunId)
+        => [..
+            session.MetaRunHistory
+                .Where(run => string.IsNullOrWhiteSpace(requestedRunId) || string.Equals(run.RunId, requestedRunId, StringComparison.Ordinal))
+                .Select(run => TryBuildDerivedProposalSummary(run, session.MetaExecutionCheckpoint))
+                .Where(static proposal => proposal is not null)
+                .Cast<MetaRunDerivedProposalSummary>()
+        ];
+
+    private static MetaRunDerivedProposalSummary? TryBuildDerivedProposalSummary(
+        SessionMetaRunRecord run,
+        SessionMetaExecutionCheckpoint? checkpoint)
+    {
+        if (string.Equals(run.Status, "paused", StringComparison.OrdinalIgnoreCase))
+        {
+            var pendingStepId = string.Equals(checkpoint?.SkillName, run.SkillName, StringComparison.OrdinalIgnoreCase)
+                ? checkpoint?.PendingStepId
+                : null;
+
+            return new MetaRunDerivedProposalSummary
+            {
+                Id = $"meta-run:{run.RunId}:paused",
+                RunId = run.RunId,
+                SkillName = run.SkillName,
+                Status = run.Status,
+                Kind = MetaRunProposalKinds.PausedRunFollowup,
+                Title = $"Resume paused meta run {run.SkillName}",
+                Summary = string.IsNullOrWhiteSpace(pendingStepId)
+                    ? $"Run {run.RunId} is paused and needs operator follow-up."
+                    : $"Run {run.RunId} is paused at step {pendingStepId}.",
+                AvailableActions = [MetaRunProposalActions.Show, MetaRunProposalActions.Accept, MetaRunProposalActions.Dismiss]
+            };
+        }
+
+        if (string.Equals(run.Status, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return new MetaRunDerivedProposalSummary
+            {
+                Id = $"meta-run:{run.RunId}:failed",
+                RunId = run.RunId,
+                SkillName = run.SkillName,
+                Status = run.Status,
+                Kind = MetaRunProposalKinds.FailedRunReview,
+                Title = $"Review failed meta run {run.SkillName}",
+                Summary = string.IsNullOrWhiteSpace(run.ErrorCode)
+                    ? $"Run {run.RunId} failed and needs review."
+                    : $"Run {run.RunId} failed with {run.ErrorCode}.",
+                AvailableActions = [MetaRunProposalActions.Show, MetaRunProposalActions.Accept, MetaRunProposalActions.Dismiss]
+            };
+        }
+
+        return null;
+    }
+
+    private static MetaRunDerivedProposalDetail BuildDerivedProposalDetail(
+        MetaRunDerivedProposalSummary summary,
+        SessionMetaRunRecord run,
+        SessionMetaExecutionCheckpoint? checkpoint)
+    {
+        var checkpointMatches = string.Equals(run.Status, "paused", StringComparison.OrdinalIgnoreCase)
+            && checkpoint is not null
+            && string.Equals(checkpoint.SkillName, run.SkillName, StringComparison.OrdinalIgnoreCase);
+
+        return new MetaRunDerivedProposalDetail
+        {
+            Id = summary.Id,
+            RunId = summary.RunId,
+            SkillName = summary.SkillName,
+            Status = summary.Status,
+            Kind = summary.Kind,
+            Title = summary.Title,
+            Summary = summary.Summary,
+            Source = summary.Source,
+            AvailableActions = [.. summary.AvailableActions],
+            Checkpoint = checkpointMatches
+                ? new MetaRunDerivedProposalCheckpointDetail
+                {
+                    PendingStepId = checkpoint!.PendingStepId,
+                    PendingStepIds = [.. checkpoint.PendingStepIds],
+                    BlockedStepIds = [.. checkpoint.BlockedStepIds],
+                    PromptPresent = !string.IsNullOrWhiteSpace(checkpoint.Prompt),
+                    OutputStepIds = [.. checkpoint.Outputs.Keys],
+                    FailureAliasStepIds = [.. checkpoint.FailureAliases.Keys]
+                }
+                : null,
+            Evidence = new MetaRunDerivedProposalEvidenceDetail
+            {
+                TimelineStepIds = [.. run.StepResults.Select(static step => step.Id)],
+                ErrorCode = run.ErrorCode,
+                Error = run.Error,
+                FinalText = run.FinalText
+            },
+            PendingStepId = checkpointMatches ? checkpoint!.PendingStepId : null,
+            PendingStepIds = checkpointMatches ? [.. checkpoint!.PendingStepIds] : [],
+            BlockedStepIds = checkpointMatches ? [.. checkpoint!.BlockedStepIds] : [],
+            TimelineStepIds = [.. run.StepResults.Select(static step => step.Id)],
+            Steps = [..
+                run.StepResults.Select(static step => new MetaRunDerivedProposalStepDetail
+                {
+                    Id = step.Id,
+                    Kind = step.Kind,
+                    Status = step.Status,
+                    FailureCode = step.FailureCode,
+                    DurationMs = step.DurationMs,
+                    Continued = step.Continued
+                })],
+            ErrorCode = run.ErrorCode,
+            Error = run.Error,
+            FinalText = run.FinalText
+        };
+    }
+
+    private static MetaRunDerivedProposalSummary[] ApplyReviewSummary(
+        MetaRunDerivedProposalSummary[] proposals,
+        IReadOnlyDictionary<string, MetaRunProposalReviewRecord> reviews)
+    {
+        if (proposals.Length == 0)
+            return proposals;
+
+        return [..
+            proposals.Select(proposal =>
+            {
+                if (!reviews.TryGetValue(proposal.Id, out var review))
+                    return proposal;
+
+                return new MetaRunDerivedProposalSummary
+                {
+                    Id = proposal.Id,
+                    RunId = proposal.RunId,
+                    SkillName = proposal.SkillName,
+                    Status = proposal.Status,
+                    Kind = proposal.Kind,
+                    Title = proposal.Title,
+                    Summary = proposal.Summary,
+                    Source = proposal.Source,
+                    AvailableActions = [.. proposal.AvailableActions],
+                    ReviewStatus = review.ReviewStatus,
+                    ReviewedAtUtc = review.ReviewedAtUtc
+                };
+            })
+        ];
+    }
+
+    private static MetaRunDerivedProposalDetail ApplyReviewDetail(
+        MetaRunDerivedProposalDetail detail,
+        MetaRunProposalReviewRecord? review)
+    {
+        if (review is null)
+            return detail;
+
+        return new MetaRunDerivedProposalDetail
+        {
+            Id = detail.Id,
+            RunId = detail.RunId,
+            SkillName = detail.SkillName,
+            Status = detail.Status,
+            Kind = detail.Kind,
+            Title = detail.Title,
+            Summary = detail.Summary,
+            Source = detail.Source,
+            AvailableActions = [.. detail.AvailableActions],
+            Checkpoint = detail.Checkpoint,
+            Evidence = detail.Evidence,
+            Review = new MetaRunProposalReviewDetail
+            {
+                Status = review.ReviewStatus,
+                ReviewedAtUtc = review.ReviewedAtUtc,
+                Reason = review.Reason
+            },
+            PendingStepId = detail.PendingStepId,
+            PendingStepIds = [.. detail.PendingStepIds],
+            BlockedStepIds = [.. detail.BlockedStepIds],
+            TimelineStepIds = [.. detail.TimelineStepIds],
+            Steps = [.. detail.Steps],
+            ErrorCode = detail.ErrorCode,
+            Error = detail.Error,
+            FinalText = detail.FinalText
+        };
+    }
+
+    private static void WriteDerivedProposalListText(MetaRunDerivedProposalListResponse response)
+    {
+        Console.WriteLine($"Session: {response.SessionId}");
+        Console.WriteLine($"Derived proposals: {response.Count}");
+
+        foreach (var proposal in response.Proposals)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Proposal: {proposal.Id}");
+            Console.WriteLine($"Run: {proposal.RunId}");
+            Console.WriteLine($"Skill: {proposal.SkillName}");
+            Console.WriteLine($"Status: {proposal.Status}");
+            Console.WriteLine($"Kind: {proposal.Kind}");
+            Console.WriteLine($"Title: {proposal.Title}");
+            Console.WriteLine($"Summary: {proposal.Summary}");
+            Console.WriteLine($"Source: {proposal.Source}");
+            Console.WriteLine($"Available actions: {string.Join(", ", proposal.AvailableActions)}");
+            Console.WriteLine($"Review status: {proposal.ReviewStatus}");
+            if (proposal.ReviewedAtUtc is not null)
+                Console.WriteLine($"Reviewed at (UTC): {proposal.ReviewedAtUtc:O}");
+        }
+    }
+
+    private static void WriteDerivedProposalDetailText(MetaRunDerivedProposalDetailResponse response)
+    {
+        var proposal = response.Proposal;
+        Console.WriteLine($"Session: {response.SessionId}");
+        Console.WriteLine($"Proposal: {proposal.Id}");
+        Console.WriteLine($"Run: {proposal.RunId}");
+        Console.WriteLine($"Skill: {proposal.SkillName}");
+        Console.WriteLine($"Status: {proposal.Status}");
+        Console.WriteLine($"Kind: {proposal.Kind}");
+        Console.WriteLine($"Title: {proposal.Title}");
+        Console.WriteLine($"Summary: {proposal.Summary}");
+        Console.WriteLine($"Source: {proposal.Source}");
+        Console.WriteLine($"Available actions: {string.Join(", ", proposal.AvailableActions)}");
+        if (proposal.Review is not null)
+        {
+            Console.WriteLine("Review:");
+            Console.WriteLine($"Status: {proposal.Review.Status}");
+            Console.WriteLine($"Reviewed at (UTC): {proposal.Review.ReviewedAtUtc:O}");
+            if (!string.IsNullOrWhiteSpace(proposal.Review.Reason))
+                Console.WriteLine($"Reason: {proposal.Review.Reason}");
+        }
+        if (proposal.Checkpoint is not null)
+        {
+            Console.WriteLine("Checkpoint:");
+            Console.WriteLine($"Pending step: {proposal.Checkpoint.PendingStepId}");
+            if (proposal.Checkpoint.PendingStepIds.Length > 0)
+                Console.WriteLine($"Pending steps: {string.Join(", ", proposal.Checkpoint.PendingStepIds)}");
+            if (proposal.Checkpoint.BlockedStepIds.Length > 0)
+                Console.WriteLine($"Blocked steps: {string.Join(", ", proposal.Checkpoint.BlockedStepIds)}");
+            Console.WriteLine(proposal.Checkpoint.PromptPresent ? "Prompt present: yes" : "Prompt present: no");
+            if (proposal.Checkpoint.OutputStepIds.Length > 0)
+                Console.WriteLine($"Output steps: {string.Join(", ", proposal.Checkpoint.OutputStepIds)}");
+            if (proposal.Checkpoint.FailureAliasStepIds.Length > 0)
+                Console.WriteLine($"Failure alias steps: {string.Join(", ", proposal.Checkpoint.FailureAliasStepIds)}");
+        }
+        if (proposal.Evidence is not null)
+        {
+            Console.WriteLine("Evidence:");
+            if (proposal.Evidence.TimelineStepIds.Length > 0)
+                Console.WriteLine($"Evidence timeline steps: {string.Join(", ", proposal.Evidence.TimelineStepIds)}");
+            if (!string.IsNullOrWhiteSpace(proposal.Evidence.ErrorCode))
+                Console.WriteLine($"Evidence error code: {proposal.Evidence.ErrorCode}");
+            if (!string.IsNullOrWhiteSpace(proposal.Evidence.Error))
+                Console.WriteLine($"Evidence error: {proposal.Evidence.Error}");
+            if (!string.IsNullOrWhiteSpace(proposal.Evidence.FinalText))
+                Console.WriteLine($"Evidence final text: {proposal.Evidence.FinalText}");
+        }
+        if (proposal.TimelineStepIds.Length > 0)
+            Console.WriteLine($"Timeline steps: {string.Join(", ", proposal.TimelineStepIds)}");
+        if (proposal.Steps.Length > 0)
+        {
+            Console.WriteLine("Steps:");
+            foreach (var step in proposal.Steps)
+            {
+                var detail = $"- {step.Id} | kind={step.Kind} | status={step.Status}";
+                if (!string.IsNullOrWhiteSpace(step.FailureCode))
+                    detail += $" | failureCode={step.FailureCode}";
+                detail += $" | durationMs={step.DurationMs:0.###############}";
+                detail += $" | continued={step.Continued.ToString().ToLowerInvariant()}";
+                Console.WriteLine(detail);
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(proposal.ErrorCode))
+            Console.WriteLine($"Error code: {proposal.ErrorCode}");
+        if (!string.IsNullOrWhiteSpace(proposal.Error))
+            Console.WriteLine($"Error: {proposal.Error}");
+        if (!string.IsNullOrWhiteSpace(proposal.FinalText))
+            Console.WriteLine($"Final text: {proposal.FinalText}");
+    }
+
+    private static void WriteProposalReviewMutationText(MetaRunProposalReviewMutationResponse response)
+    {
+        Console.WriteLine($"Session: {response.SessionId}");
+        Console.WriteLine($"Proposal: {response.ProposalId}");
+        Console.WriteLine($"Review status: {response.ReviewStatus}");
+        Console.WriteLine($"Reviewed at (UTC): {response.ReviewedAtUtc:O}");
+        Console.WriteLine(response.AlreadyReviewed ? "Already reviewed: yes" : "Already reviewed: no");
+        if (!string.IsNullOrWhiteSpace(response.Reason))
+            Console.WriteLine($"Reason: {response.Reason}");
+    }
+
     private static MetaRunReplayPreviewResponse BuildReplayPreview(string sessionId, SessionMetaRunRecord run)
     {
         var missingRequirements = GetReplayMissingRequirements(run);
@@ -675,6 +1306,112 @@ internal static class SkillCommands
             Plan = GetReplayPlan(run, missingRequirements),
             MissingRequirements = missingRequirements
         };
+    }
+
+    private static MetaRunReplayResultResponse BuildReplayResult(
+        string sessionId,
+        SessionMetaRunRecord run,
+        SessionMetaExecutionCheckpoint? checkpoint)
+    {
+        var checkpointSummary = TryBuildReplayCheckpointSummary(run, checkpoint);
+        return new MetaRunReplayResultResponse
+        {
+            SessionId = sessionId,
+            RunId = run.RunId,
+            SkillName = run.SkillName,
+            Mode = MetaRunReplayExecutionModes.AuditReconstruction,
+            Status = run.Status,
+            Source = checkpointSummary is null
+                ? MetaRunReplayExecutionSources.HistoryOnly
+                : MetaRunReplayExecutionSources.HistoryPlusCheckpoint,
+            FinalText = run.FinalText,
+            Error = run.Error,
+            ErrorCode = run.ErrorCode,
+            Timeline = [.. run.StepResults.Select(static (step, index) => new MetaRunReplayTimelineItem
+            {
+                Sequence = index + 1,
+                StepId = step.Id,
+                Kind = step.Kind,
+                Status = step.Status,
+                FailureCode = step.FailureCode,
+                DurationMs = step.DurationMs,
+                Continued = step.Continued,
+                Source = MetaRunReplayTimelineSources.RunHistory
+            })],
+            Checkpoint = checkpointSummary,
+            ProposalSummary = new MetaRunProposalSummary()
+        };
+    }
+
+    private static MetaRunReplayCheckpointSummary? TryBuildReplayCheckpointSummary(
+        SessionMetaRunRecord run,
+        SessionMetaExecutionCheckpoint? checkpoint)
+    {
+        if (!string.Equals(run.Status, "paused", StringComparison.OrdinalIgnoreCase)
+            || checkpoint is null
+            || !string.Equals(checkpoint.SkillName, run.SkillName, StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(checkpoint.PendingStepId))
+        {
+            return null;
+        }
+
+        return new MetaRunReplayCheckpointSummary
+        {
+            PendingStepId = checkpoint.PendingStepId,
+            PendingStepIds = [.. checkpoint.PendingStepIds],
+            BlockedStepIds = [.. checkpoint.BlockedStepIds],
+            PromptPresent = !string.IsNullOrWhiteSpace(checkpoint.Prompt),
+            OutputStepIds = [.. checkpoint.Outputs.Keys.OrderBy(static key => key, StringComparer.Ordinal)],
+            FailureAliasStepIds = [.. checkpoint.FailureAliases.Keys.OrderBy(static key => key, StringComparer.Ordinal)]
+        };
+    }
+
+    private static void WriteReplayResultText(MetaRunReplayResultResponse replay)
+    {
+        Console.WriteLine($"Replay reconstruction for run: {replay.RunId}");
+        Console.WriteLine($"Session: {replay.SessionId}");
+        Console.WriteLine($"Skill: {replay.SkillName}");
+        Console.WriteLine($"Mode: {replay.Mode}");
+        Console.WriteLine($"Source: {replay.Source}");
+        Console.WriteLine($"Status: {replay.Status}");
+        if (!string.IsNullOrWhiteSpace(replay.FinalText))
+            Console.WriteLine($"Final text: {replay.FinalText}");
+        if (!string.IsNullOrWhiteSpace(replay.ErrorCode))
+            Console.WriteLine($"Error code: {replay.ErrorCode}");
+        if (!string.IsNullOrWhiteSpace(replay.Error))
+            Console.WriteLine($"Error: {replay.Error}");
+
+        Console.WriteLine("Timeline:");
+        foreach (var item in replay.Timeline)
+            Console.WriteLine(FormatReplayTimelineItem(item));
+
+        if (replay.Checkpoint is not null)
+        {
+            Console.WriteLine("Checkpoint:");
+            Console.WriteLine($"Pending step: {replay.Checkpoint.PendingStepId}");
+            if (replay.Checkpoint.PendingStepIds.Length > 0)
+                Console.WriteLine($"Pending steps: {string.Join(", ", replay.Checkpoint.PendingStepIds)}");
+            if (replay.Checkpoint.BlockedStepIds.Length > 0)
+                Console.WriteLine($"Blocked steps: {string.Join(", ", replay.Checkpoint.BlockedStepIds)}");
+            Console.WriteLine(replay.Checkpoint.PromptPresent ? "Prompt retained: yes" : "Prompt retained: no");
+        }
+
+        Console.WriteLine("Proposal summary:");
+        Console.WriteLine(replay.ProposalSummary.Available ? "Available: yes" : "Available: no");
+        Console.WriteLine($"Reason: {replay.ProposalSummary.Reason}");
+    }
+
+    private static string FormatReplayTimelineItem(MetaRunReplayTimelineItem item)
+    {
+        var line = $"- {item.Sequence} | step={item.StepId} | kind={item.Kind} | status={item.Status} | duration_ms={item.DurationMs:0.###}";
+        if (!string.IsNullOrWhiteSpace(item.FailureCode))
+            line += $" | failure_code={item.FailureCode}";
+        if (item.Continued)
+            line += " | continued=true";
+        if (!string.IsNullOrWhiteSpace(item.Notes))
+            line += $" | notes={item.Notes}";
+
+        return line;
     }
 
     private static string FormatReplayRequirement(MetaRunReplayRequirementPreview requirement)

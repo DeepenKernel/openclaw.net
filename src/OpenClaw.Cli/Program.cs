@@ -123,6 +123,11 @@ internal static class Program
               openclaw skills <inspect|install|list|meta-runs> [options]
               openclaw skills meta-runs <session-id> [--storage <path>] [--limit <count>] [--run <run-id>] [--verbose] [--json]
               openclaw skills meta-runs replay <session-id> --run <run-id> [--storage <path>] [--json]
+              openclaw skills meta-runs reconstruct <session-id> --run <run-id> [--storage <path>] [--json]
+              openclaw skills meta-runs proposals <session-id> [--run <run-id>] [--storage <path>] [--json]
+              openclaw skills meta-runs proposals show <session-id> --proposal <id> [--storage <path>] [--json]
+              openclaw skills meta-runs proposals accept <session-id> --proposal <id> [--storage <path>] [--json]
+              openclaw skills meta-runs proposals dismiss <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
               openclaw clawhub [wrapper options] [--] <clawhub args...>
 
             Common options:

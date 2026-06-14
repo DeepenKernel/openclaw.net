@@ -268,6 +268,15 @@ public sealed class SessionMetaStepResult
     public string? FailureCode { get; init; }
     public double DurationMs { get; init; }
     public bool Continued { get; init; }
+    public SessionMetaStepExecutionEvidence? ExecutionEvidence { get; init; }
+}
+
+public sealed class SessionMetaStepExecutionEvidence
+{
+    public string CommandPreview { get; init; } = string.Empty;
+    public string InputMode { get; init; } = "none";
+    public int StdinBytes { get; init; }
+    public string ParseMode { get; init; } = "text";
 }
 
 public sealed class MetaRunReplayPreviewResponse
@@ -281,6 +290,8 @@ public sealed class MetaRunReplayPreviewResponse
     public MetaRunReplayStepPreview[] RetainedSteps { get; init; } = [];
     public MetaRunReplayPlanPreview Plan { get; init; } = new();
     public MetaRunReplayRequirementPreview[] MissingRequirements { get; init; } = [];
+    public MetaRunReplayOperatorSummary OperatorSummary { get; init; } = new();
+    public MetaRunReplayTriageHint[] TriageHints { get; init; } = [];
 }
 
 public sealed class MetaRunReplayStepPreview
@@ -334,6 +345,7 @@ public static class MetaRunReplayRequirementNames
     public const string StepInputs = "step_inputs";
     public const string ToolArguments = "tool_arguments";
     public const string StepResults = "step_results";
+    public const string SkillExecInputs = "skill_exec_inputs";
 }
 
 public static class MetaRunReplayRequirementKinds
@@ -353,6 +365,7 @@ public static class MetaRunReplayRequirementReasons
     public const string StepInputsNotPersisted = "Persisted meta run history records step outcomes but not the step-level inputs needed to re-run the graph deterministically.";
     public const string ToolArgumentsNotPersisted = "Persisted meta run history does not retain the original tool arguments required to reconstruct tool calls.";
     public const string StepResultsNotRetained = "This run did not retain any step results, so replay preview cannot show even a step-level execution trace.";
+    public const string SkillExecInputsNotPersisted = "skill_exec_inputs_not_persisted";
 }
 
 public static class MetaRunReplayStepReadinessReasons
@@ -392,6 +405,42 @@ public sealed class MetaRunReplayResultResponse
     public MetaRunReplayTimelineItem[] Timeline { get; init; } = [];
     public MetaRunReplayCheckpointSummary? Checkpoint { get; init; }
     public MetaRunProposalSummary ProposalSummary { get; init; } = new();
+    public MetaRunReplayOperatorSummary OperatorSummary { get; init; } = new();
+    public MetaRunReplayTriageHint[] TriageHints { get; init; } = [];
+}
+
+public sealed class MetaRunReplayOperatorSummary
+{
+    public int TotalSteps { get; init; }
+    public int FailedSteps { get; init; }
+    public int ContinuedSteps { get; init; }
+    public int SkillExecSteps { get; init; }
+    public int SkillExecStepsWithoutEvidence { get; init; }
+    public MetaRunReplayCountBucket[] StepKinds { get; init; } = [];
+    public MetaRunReplayCountBucket[] FailureClusters { get; init; } = [];
+}
+
+public sealed class MetaRunReplayCountBucket
+{
+    public required string Name { get; init; }
+    public int Count { get; init; }
+}
+
+public sealed class MetaRunReplayTriageHint
+{
+    public required string Code { get; init; }
+    public int Priority { get; init; }
+    public required string Message { get; init; }
+    public string[] StepIds { get; init; } = [];
+    public string[] RequirementNames { get; init; } = [];
+}
+
+public static class MetaRunReplayTriageHintCodes
+{
+    public const string SkillExecInputsNotPersisted = "skill_exec_inputs_not_persisted";
+    public const string SkillExecParseModeAnomaly = "skill_exec_parse_mode_anomaly";
+    public const string SkillExecCommandPreviewPossiblyTruncated = "skill_exec_command_preview_possibly_truncated";
+    public const string DominantFailureCluster = "dominant_failure_cluster";
 }
 
 public sealed class MetaRunReplayTimelineItem
@@ -467,6 +516,9 @@ public sealed class MetaRunDerivedProposalDetail
     // Prefer grouped detail for new consumers; the flat fields below remain as compatibility mirrors.
     public MetaRunDerivedProposalCheckpointDetail? Checkpoint { get; init; }
     public MetaRunDerivedProposalEvidenceDetail? Evidence { get; init; }
+    public MetaRunProposalProvenanceDetail? Provenance { get; init; }
+    public MetaRunProposalLifecycleDetail? Lifecycle { get; init; }
+    public MetaRunProposalProvenanceTransition[] ProvenanceHistory { get; init; } = [];
     public MetaRunProposalReviewDetail? Review { get; init; }
     public string? PendingStepId { get; init; }
     public string[] PendingStepIds { get; init; } = [];
@@ -476,6 +528,39 @@ public sealed class MetaRunDerivedProposalDetail
     public string? ErrorCode { get; init; }
     public string? Error { get; init; }
     public string? FinalText { get; init; }
+}
+
+public sealed class MetaRunProposalLifecycleDetail
+{
+    public required string Status { get; init; }
+    public bool RolledBack { get; init; }
+    public DateTimeOffset? ReviewedAtUtc { get; init; }
+    public DateTimeOffset? RolledBackAtUtc { get; init; }
+    public string? ReviewNotes { get; init; }
+    public string? RollbackReason { get; init; }
+}
+
+public sealed class MetaRunProposalProvenanceTransition
+{
+    public required string Action { get; init; }
+    public required string FromStatus { get; init; }
+    public required string ToStatus { get; init; }
+    public required DateTimeOffset ChangedAtUtc { get; init; }
+    public string? Reason { get; init; }
+}
+
+public sealed class MetaRunProposalProvenanceDetail
+{
+    // Durable lifecycle snapshot captured when proposal review is persisted.
+    public string SnapshotVersion { get; init; } = "v1";
+    public DateTimeOffset CapturedAtUtc { get; init; }
+    public string RunStatus { get; init; } = string.Empty;
+    public DateTimeOffset RunStartedAtUtc { get; init; }
+    public DateTimeOffset RunCompletedAtUtc { get; init; }
+    public int StepCount { get; init; }
+    public string[] StepIds { get; init; } = [];
+    public string? CheckpointPendingStepId { get; init; }
+    public bool CheckpointPromptPresent { get; init; }
 }
 
 public sealed class MetaRunProposalReviewRecord
@@ -493,6 +578,7 @@ public sealed class MetaRunProposalReviewMutationResponse
     public required string SessionId { get; init; }
     public required string ProposalId { get; init; }
     public required string ReviewStatus { get; init; }
+    public required string LifecycleStatus { get; init; }
     public bool AlreadyReviewed { get; init; }
     public DateTimeOffset ReviewedAtUtc { get; init; }
     public string? Reason { get; init; }
@@ -567,6 +653,8 @@ public static class MetaRunProposalActions
     public const string Show = "show";
     public const string Accept = "accept";
     public const string Dismiss = "dismiss";
+    public const string Rollback = "rollback";
+    public const string Change = "change";
 }
 
 public static class MetaRunProposalReviewStatuses
@@ -574,6 +662,7 @@ public static class MetaRunProposalReviewStatuses
     public const string Pending = "pending";
     public const string Accepted = "accepted";
     public const string Dismissed = "dismissed";
+    public const string RolledBack = "rolled_back";
 }
 
 public static class MetaRunProposalKinds
@@ -644,6 +733,7 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(List<SessionMetaRunRecord>))]
 [JsonSerializable(typeof(SessionMetaStepResult))]
 [JsonSerializable(typeof(List<SessionMetaStepResult>))]
+[JsonSerializable(typeof(SessionMetaStepExecutionEvidence))]
 [JsonSerializable(typeof(MetaRunReplayPreviewResponse))]
 [JsonSerializable(typeof(MetaRunReplayStepPreview))]
 [JsonSerializable(typeof(MetaRunReplayStepPreview[]))]
@@ -653,6 +743,11 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(MetaRunReplayStepReadinessPreview))]
 [JsonSerializable(typeof(MetaRunReplayStepReadinessPreview[]))]
 [JsonSerializable(typeof(MetaRunReplayResultResponse))]
+[JsonSerializable(typeof(MetaRunReplayOperatorSummary))]
+[JsonSerializable(typeof(MetaRunReplayCountBucket))]
+[JsonSerializable(typeof(MetaRunReplayCountBucket[]))]
+[JsonSerializable(typeof(MetaRunReplayTriageHint))]
+[JsonSerializable(typeof(MetaRunReplayTriageHint[]))]
 [JsonSerializable(typeof(MetaRunReplayTimelineItem))]
 [JsonSerializable(typeof(MetaRunReplayTimelineItem[]))]
 [JsonSerializable(typeof(MetaRunReplayCheckpointSummary))]
@@ -671,6 +766,10 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(MetaRunDerivedProposalSummary[]))]
 [JsonSerializable(typeof(MetaRunDerivedProposalDetailResponse))]
 [JsonSerializable(typeof(MetaRunDerivedProposalDetail))]
+[JsonSerializable(typeof(MetaRunProposalProvenanceDetail))]
+[JsonSerializable(typeof(MetaRunProposalLifecycleDetail))]
+[JsonSerializable(typeof(MetaRunProposalProvenanceTransition))]
+[JsonSerializable(typeof(MetaRunProposalProvenanceTransition[]))]
 [JsonSerializable(typeof(MetaRunDerivedProposalCheckpointDetail))]
 [JsonSerializable(typeof(MetaRunDerivedProposalEvidenceDetail))]
 [JsonSerializable(typeof(MetaRunProposalReviewRecord))]

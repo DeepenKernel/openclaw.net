@@ -1688,6 +1688,14 @@ public sealed class MafAdapterTests
             var result = await InvokeMafMetaSkillAsync(runtime, session, "meta-flow", "incident-stdin", CancellationToken.None);
 
             Assert.Equal("stdin:incident-stdin", result.Trim());
+
+            var run = Assert.Single(session.MetaRunHistory);
+            var step = Assert.Single(run.StepResults);
+            Assert.Equal("skill_exec", step.Kind);
+            Assert.NotNull(step.ExecutionEvidence);
+            Assert.Equal("stdin", step.ExecutionEvidence!.InputMode);
+            Assert.True(step.ExecutionEvidence.StdinBytes > 0);
+            Assert.Contains("echo-stdin.ps1", step.ExecutionEvidence.CommandPreview, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

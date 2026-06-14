@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Features;
@@ -11,6 +12,7 @@ namespace OpenClaw.Cli;
 internal static class SkillCommands
 {
     private const string EnvWorkspace = "OPENCLAW_WORKSPACE";
+    private const string DefaultMetaRunProposalRollbackReason = "meta_run_proposal_operator_rollback";
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -158,6 +160,10 @@ internal static class SkillCommands
             return ReviewMetaRunProposalAsync(args.Skip(1).ToArray(), MetaRunProposalReviewStatuses.Accepted, allowReason: false);
         if (args.Length > 0 && string.Equals(args[0], "dismiss", StringComparison.OrdinalIgnoreCase))
             return ReviewMetaRunProposalAsync(args.Skip(1).ToArray(), MetaRunProposalReviewStatuses.Dismissed, allowReason: true);
+        if (args.Length > 0 && string.Equals(args[0], "rollback", StringComparison.OrdinalIgnoreCase))
+            return RollbackMetaRunProposalAsync(args.Skip(1).ToArray());
+        if (args.Length > 0 && string.Equals(args[0], "change", StringComparison.OrdinalIgnoreCase))
+            return ChangeMetaRunProposalAsync(args.Skip(1).ToArray());
         if (args.Length > 0 && string.Equals(args[0], "show", StringComparison.OrdinalIgnoreCase))
             return ShowMetaRunProposalAsync(args.Skip(1).ToArray());
 
@@ -278,11 +284,19 @@ internal static class SkillCommands
             }
 
             var run = session.MetaRunHistory.First(run => string.Equals(run.RunId, summary.RunId, StringComparison.Ordinal));
-            var review = await GetMetaRunLearningReviewAsync(learningProposalStore, sessionId, summary.Id, CancellationToken.None);
+            var durableProposal = await GetMetaRunLearningProposalAsync(learningProposalStore, sessionId, summary.Id, CancellationToken.None);
+            var review = durableProposal is null
+                ? null
+                : ToMetaRunProposalReviewRecord(durableProposal, sessionId, summary.Id);
             var detail = new MetaRunDerivedProposalDetailResponse
             {
                 SessionId = sessionId,
-                Proposal = ApplyReviewDetail(BuildDerivedProposalDetail(summary, run, session.MetaExecutionCheckpoint), review)
+                Proposal = ApplyReviewDetail(
+                    BuildDerivedProposalDetail(summary, run, session.MetaExecutionCheckpoint),
+                    review,
+                    BuildMetaRunProposalProvenanceDetail(durableProposal),
+                    BuildMetaRunProposalLifecycleDetail(durableProposal),
+                    BuildMetaRunProposalProvenanceHistory(durableProposal))
             };
 
             if (asJson)
@@ -367,14 +381,50 @@ internal static class SkillCommands
                 return 1;
             }
 
-            var durableProposalId = BuildMetaRunReviewProposalId(sessionId, proposalId);
+            var durableProposalId = BuildMetaRunProposalDurableId(sessionId, proposalId);
             var existing = await learningProposalStore.GetProposalAsync(durableProposalId, CancellationToken.None);
             var alreadyReviewed = false;
+            var lifecycleStatus = MapReviewStatusToLearningProposalStatus(targetStatus);
             MetaRunProposalReviewRecord record;
             if (existing is null || string.Equals(existing.Status, LearningProposalStatus.Pending, StringComparison.OrdinalIgnoreCase))
             {
                 var reviewedAtUtc = DateTimeOffset.UtcNow;
-                var lifecycleStatus = MapReviewStatusToLearningProposalStatus(targetStatus);
+                var runSnapshot = session.MetaRunHistory.First(run => string.Equals(run.RunId, proposal.RunId, StringComparison.Ordinal));
+                var checkpointSnapshot = string.Equals(runSnapshot.Status, "paused", StringComparison.OrdinalIgnoreCase)
+                    && session.MetaExecutionCheckpoint is not null
+                    && string.Equals(session.MetaExecutionCheckpoint.SkillName, runSnapshot.SkillName, StringComparison.OrdinalIgnoreCase)
+                    ? session.MetaExecutionCheckpoint
+                    : null;
+
+                var metadata = BuildMetaRunProposalMetadata(existing, sessionId, proposal);
+                if (!string.IsNullOrWhiteSpace(reason))
+                    metadata[MetaRunProposalMetadata.Reason] = reason!;
+
+                var durableRecord = BuildUpdatedMetaRunLearningProposal(
+                    existing,
+                    proposal,
+                    sessionId,
+                    lifecycleStatus,
+                    reviewedAtUtc,
+                    reviewedAtUtc,
+                    allowReason ? reason : null,
+                    rolledBack: false,
+                    rolledBackAtUtc: null,
+                    rollbackReason: null,
+                    metadata);
+
+                PopulateMetaRunProposalProvenanceMetadata(durableRecord.Metadata, runSnapshot, checkpointSnapshot, reviewedAtUtc);
+                AppendMetaRunProposalTransitionMetadata(
+                    durableRecord.Metadata,
+                    string.Equals(targetStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal)
+                        ? "accept"
+                        : "dismiss",
+                    existing?.Status ?? LearningProposalStatus.Pending,
+                    lifecycleStatus,
+                    reviewedAtUtc,
+                    allowReason ? reason : null);
+                await learningProposalStore.SaveProposalAsync(durableRecord, CancellationToken.None);
+
                 record = new MetaRunProposalReviewRecord
                 {
                     SessionId = sessionId,
@@ -383,46 +433,11 @@ internal static class SkillCommands
                     Reason = allowReason ? reason : null,
                     ReviewedAtUtc = reviewedAtUtc
                 };
-
-                var durableRecord = new LearningProposal
-                {
-                    Id = durableProposalId,
-                    Kind = LearningProposalKind.MetaRunReview,
-                    Status = lifecycleStatus,
-                    Title = proposal.Title,
-                    Summary = proposal.Summary,
-                    SkillName = proposal.SkillName,
-                    Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
-                    {
-                        [MetaRunReviewMetadata.SessionId] = sessionId,
-                        [MetaRunReviewMetadata.ProposalId] = proposalId,
-                        [MetaRunReviewMetadata.RunId] = proposal.RunId,
-                        [MetaRunReviewMetadata.ReviewStatus] = targetStatus,
-                        [MetaRunReviewMetadata.Source] = proposal.Source
-                    },
-                    SourceSessionIds = [sessionId],
-                    SourceTurnIds = [],
-                    ToolNames = [],
-                    ToolSequence = [],
-                    ToolObservations = [],
-                    FeedbackEvents = [],
-                    RiskLevel = LearningProposalRiskLevels.Low,
-                    Confidence = 1f,
-                    CreatedReason = "meta_run_review",
-                    CreatedAtUtc = existing?.CreatedAtUtc ?? reviewedAtUtc,
-                    UpdatedAtUtc = reviewedAtUtc,
-                    ReviewedAtUtc = reviewedAtUtc,
-                    ReviewNotes = allowReason ? reason : null
-                };
-
-                if (!string.IsNullOrWhiteSpace(reason))
-                    durableRecord.Metadata[MetaRunReviewMetadata.Reason] = reason!;
-
-                await learningProposalStore.SaveProposalAsync(durableRecord, CancellationToken.None);
             }
-            else if (string.Equals(MapLearningProposalStatusToReviewStatus(existing.Status), targetStatus, StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(existing.Status, lifecycleStatus, StringComparison.OrdinalIgnoreCase))
             {
                 alreadyReviewed = true;
+                lifecycleStatus = existing.Status;
                 record = ToMetaRunProposalReviewRecord(existing, sessionId, proposalId);
             }
             else
@@ -436,6 +451,7 @@ internal static class SkillCommands
                 SessionId = sessionId,
                 ProposalId = proposalId,
                 ReviewStatus = record.ReviewStatus,
+                LifecycleStatus = lifecycleStatus,
                 AlreadyReviewed = alreadyReviewed,
                 ReviewedAtUtc = record.ReviewedAtUtc,
                 Reason = record.Reason
@@ -449,6 +465,309 @@ internal static class SkillCommands
             {
                 WriteProposalReviewMutationText(response);
             }
+
+            return 0;
+        }
+        finally
+        {
+            switch (learningProposalStore)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static async Task<int> RollbackMetaRunProposalAsync(string[] args)
+    {
+        var asJson = args.Contains("--json");
+        var sessionId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            Console.Error.WriteLine("Usage: openclaw skills meta-runs proposals rollback <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var proposalId = GetOptionValue(args, "--proposal");
+        if (string.IsNullOrWhiteSpace(proposalId))
+        {
+            Console.Error.WriteLine("--proposal <id> is required for meta-runs proposals rollback.");
+            return 2;
+        }
+
+        var reason = GetOptionValue(args, "--reason");
+        var storagePath = GetOptionValue(args, "--storage");
+        var learningProposalStore = OpenLearningProposalStore(storagePath);
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+            if (session is null)
+            {
+                Console.Error.WriteLine($"Session '{sessionId}' not found.");
+                return 1;
+            }
+
+            var proposal = BuildDerivedProposals(session, requestedRunId: null)
+                .FirstOrDefault(item => string.Equals(item.Id, proposalId, StringComparison.Ordinal));
+            if (proposal is null)
+            {
+                Console.Error.WriteLine($"Proposal '{proposalId}' not found in session '{sessionId}'.");
+                return 1;
+            }
+
+            var durableProposalId = BuildMetaRunProposalDurableId(sessionId, proposalId);
+            var existing = await learningProposalStore.GetProposalAsync(durableProposalId, CancellationToken.None);
+            var lifecycleStatus = LearningProposalStatus.RolledBack;
+            var alreadyReviewed = false;
+            MetaRunProposalReviewRecord record;
+
+            if (existing is null || string.Equals(existing.Status, LearningProposalStatus.Pending, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"Invalid lifecycle transition for proposal '{proposalId}' in session '{sessionId}': pending -> {LearningProposalStatus.RolledBack}. Only approved or rejected proposals can be rolled back.");
+                return 1;
+            }
+
+            if (string.Equals(existing.Status, LearningProposalStatus.RolledBack, StringComparison.OrdinalIgnoreCase))
+            {
+                alreadyReviewed = true;
+                lifecycleStatus = existing.Status;
+                record = ToMetaRunProposalReviewRecord(existing, sessionId, proposalId);
+            }
+            else if (string.Equals(existing.Status, LearningProposalStatus.Approved, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(existing.Status, LearningProposalStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+            {
+                var reviewedAtUtc = DateTimeOffset.UtcNow;
+                var rollbackReason = string.IsNullOrWhiteSpace(reason) ? DefaultMetaRunProposalRollbackReason : reason!;
+                var runSnapshot = session.MetaRunHistory.First(run => string.Equals(run.RunId, proposal.RunId, StringComparison.Ordinal));
+                var checkpointSnapshot = string.Equals(runSnapshot.Status, "paused", StringComparison.OrdinalIgnoreCase)
+                    && session.MetaExecutionCheckpoint is not null
+                    && string.Equals(session.MetaExecutionCheckpoint.SkillName, runSnapshot.SkillName, StringComparison.OrdinalIgnoreCase)
+                    ? session.MetaExecutionCheckpoint
+                    : null;
+
+                var metadata = BuildMetaRunProposalMetadata(existing, sessionId, proposal);
+                metadata[MetaRunProposalMetadata.Reason] = rollbackReason;
+
+                var durableRecord = BuildUpdatedMetaRunLearningProposal(
+                    existing,
+                    proposal,
+                    sessionId,
+                    lifecycleStatus,
+                    reviewedAtUtc,
+                    reviewedAtUtc,
+                    existing.ReviewNotes,
+                    rolledBack: true,
+                    rolledBackAtUtc: reviewedAtUtc,
+                    rollbackReason,
+                    metadata);
+
+                PopulateMetaRunProposalProvenanceMetadata(durableRecord.Metadata, runSnapshot, checkpointSnapshot, reviewedAtUtc);
+                AppendMetaRunProposalTransitionMetadata(
+                    durableRecord.Metadata,
+                    "rollback",
+                    existing.Status,
+                    lifecycleStatus,
+                    reviewedAtUtc,
+                    rollbackReason);
+                await learningProposalStore.SaveProposalAsync(durableRecord, CancellationToken.None);
+
+                record = new MetaRunProposalReviewRecord
+                {
+                    SessionId = sessionId,
+                    ProposalId = proposalId,
+                    ReviewStatus = MetaRunProposalReviewStatuses.RolledBack,
+                    Reason = rollbackReason,
+                    ReviewedAtUtc = reviewedAtUtc
+                };
+            }
+            else
+            {
+                Console.Error.WriteLine($"Invalid lifecycle transition for proposal '{proposalId}' in session '{sessionId}': {existing.Status} -> {LearningProposalStatus.RolledBack}. Only approved or rejected proposals can be rolled back.");
+                return 1;
+            }
+
+            var response = new MetaRunProposalReviewMutationResponse
+            {
+                SessionId = sessionId,
+                ProposalId = proposalId,
+                ReviewStatus = record.ReviewStatus,
+                LifecycleStatus = lifecycleStatus,
+                AlreadyReviewed = alreadyReviewed,
+                ReviewedAtUtc = record.ReviewedAtUtc,
+                Reason = record.Reason
+            };
+
+            if (asJson)
+                Console.WriteLine(JsonSerializer.Serialize(response, CoreJsonContext.Default.MetaRunProposalReviewMutationResponse));
+            else
+                WriteProposalReviewMutationText(response);
+
+            return 0;
+        }
+        finally
+        {
+            switch (learningProposalStore)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static async Task<int> ChangeMetaRunProposalAsync(string[] args)
+    {
+        var asJson = args.Contains("--json");
+        var sessionId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            Console.Error.WriteLine("Usage: openclaw skills meta-runs proposals change <session-id> --proposal <id> --to <accept|dismiss> [--reason <text>] [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var proposalId = GetOptionValue(args, "--proposal");
+        if (string.IsNullOrWhiteSpace(proposalId))
+        {
+            Console.Error.WriteLine("--proposal <id> is required for meta-runs proposals change.");
+            return 2;
+        }
+
+        var to = GetOptionValue(args, "--to");
+        if (!TryMapMetaRunProposalChangeTarget(to, out var targetReviewStatus, out var targetLifecycleStatus))
+        {
+            Console.Error.WriteLine("--to must be one of: accept, dismiss.");
+            Console.Error.WriteLine("Usage: openclaw skills meta-runs proposals change <session-id> --proposal <id> --to <accept|dismiss> [--reason <text>] [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var reason = GetOptionValue(args, "--reason");
+        var storagePath = GetOptionValue(args, "--storage");
+        var learningProposalStore = OpenLearningProposalStore(storagePath);
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+            if (session is null)
+            {
+                Console.Error.WriteLine($"Session '{sessionId}' not found.");
+                return 1;
+            }
+
+            var proposal = BuildDerivedProposals(session, requestedRunId: null)
+                .FirstOrDefault(item => string.Equals(item.Id, proposalId, StringComparison.Ordinal));
+            if (proposal is null)
+            {
+                Console.Error.WriteLine($"Proposal '{proposalId}' not found in session '{sessionId}'.");
+                return 1;
+            }
+
+            var durableProposalId = BuildMetaRunProposalDurableId(sessionId, proposalId);
+            var existing = await learningProposalStore.GetProposalAsync(durableProposalId, CancellationToken.None);
+            var alreadyReviewed = false;
+            var lifecycleStatus = targetLifecycleStatus;
+            MetaRunProposalReviewRecord record;
+
+            if (existing is null)
+            {
+                Console.Error.WriteLine($"Invalid lifecycle transition for proposal '{proposalId}' in session '{sessionId}': pending -> {targetLifecycleStatus}. Change only supports {LearningProposalStatus.RolledBack} -> {targetLifecycleStatus}.");
+                return 1;
+            }
+
+            if (!string.Equals(existing.Status, LearningProposalStatus.RolledBack, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine($"Invalid lifecycle transition for proposal '{proposalId}' in session '{sessionId}': {existing.Status} -> {targetLifecycleStatus}. Change only supports {LearningProposalStatus.RolledBack} -> {targetLifecycleStatus}.");
+                return 1;
+            }
+            else
+            {
+                var reviewedAtUtc = DateTimeOffset.UtcNow;
+                var runSnapshot = session.MetaRunHistory.First(run => string.Equals(run.RunId, proposal.RunId, StringComparison.Ordinal));
+                var checkpointSnapshot = string.Equals(runSnapshot.Status, "paused", StringComparison.OrdinalIgnoreCase)
+                    && session.MetaExecutionCheckpoint is not null
+                    && string.Equals(session.MetaExecutionCheckpoint.SkillName, runSnapshot.SkillName, StringComparison.OrdinalIgnoreCase)
+                    ? session.MetaExecutionCheckpoint
+                    : null;
+
+                var metadata = BuildMetaRunProposalMetadata(existing, sessionId, proposal);
+                if (!string.IsNullOrWhiteSpace(reason))
+                    metadata[MetaRunProposalMetadata.Reason] = reason!;
+
+                var durableRecord = BuildUpdatedMetaRunLearningProposal(
+                    existing,
+                    proposal,
+                    sessionId,
+                    targetLifecycleStatus,
+                    reviewedAtUtc,
+                    reviewedAtUtc,
+                    reason,
+                    rolledBack: false,
+                    rolledBackAtUtc: null,
+                    rollbackReason: null,
+                    metadata);
+
+                PopulateMetaRunProposalProvenanceMetadata(durableRecord.Metadata, runSnapshot, checkpointSnapshot, reviewedAtUtc);
+                AppendMetaRunProposalTransitionMetadata(
+                    durableRecord.Metadata,
+                    "change",
+                    existing.Status,
+                    targetLifecycleStatus,
+                    reviewedAtUtc,
+                    reason);
+                await learningProposalStore.SaveProposalAsync(durableRecord, CancellationToken.None);
+
+                record = new MetaRunProposalReviewRecord
+                {
+                    SessionId = sessionId,
+                    ProposalId = proposalId,
+                    ReviewStatus = targetReviewStatus,
+                    Reason = reason,
+                    ReviewedAtUtc = reviewedAtUtc
+                };
+            }
+
+            var response = new MetaRunProposalReviewMutationResponse
+            {
+                SessionId = sessionId,
+                ProposalId = proposalId,
+                ReviewStatus = record.ReviewStatus,
+                LifecycleStatus = lifecycleStatus,
+                AlreadyReviewed = alreadyReviewed,
+                ReviewedAtUtc = record.ReviewedAtUtc,
+                Reason = record.Reason
+            };
+
+            if (asJson)
+                Console.WriteLine(JsonSerializer.Serialize(response, CoreJsonContext.Default.MetaRunProposalReviewMutationResponse));
+            else
+                WriteProposalReviewMutationText(response);
 
             return 0;
         }
@@ -592,6 +911,7 @@ internal static class SkillCommands
                     Console.WriteLine($"Replayable steps: {string.Join(", ", preview.Plan.ReplayableSteps.Select(static item => $"{item.Id} | readiness={item.Readiness} | reason={item.Reason}"))}");
                 if (preview.Plan.BlockedByRequirements.Length > 0)
                     Console.WriteLine($"Blocked by requirements: {string.Join(", ", preview.Plan.BlockedByRequirements.Select(FormatReplayRequirement))}");
+                WriteReplayOperatorDiagnosticsText(preview.OperatorSummary, preview.TriageHints);
                 if (preview.AvailableArtifacts.Length > 0)
                 {
                     Console.WriteLine("Available artifacts:");
@@ -1045,6 +1365,8 @@ internal static class SkillCommands
                             openclaw skills meta-runs proposals show <session-id> --proposal <id> [--storage <path>] [--json]
                             openclaw skills meta-runs proposals accept <session-id> --proposal <id> [--storage <path>] [--json]
                             openclaw skills meta-runs proposals dismiss <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
+                            openclaw skills meta-runs proposals rollback <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
+                            openclaw skills meta-runs proposals change <session-id> --proposal <id> --to <accept|dismiss> [--reason <text>] [--storage <path>] [--json]
 
             Notes:
               - Remote registry installs still go through `openclaw clawhub`.
@@ -1057,7 +1379,7 @@ internal static class SkillCommands
                                 - `meta-runs reconstruct` builds an audit replay result from persisted run history and optional checkpoint state without re-executing tools or models.
                                 - `meta-runs proposals` returns derived read-only proposal summaries from persisted meta-run evidence.
                                 - `meta-runs proposals show` expands a single derived proposal without implying durable lifecycle state.
-                                - `meta-runs proposals accept|dismiss` records review decisions only; it does not execute tools, models, or replay.
+                                - `meta-runs proposals accept|dismiss|rollback|change` records lifecycle decisions only; it does not execute tools, models, or replay.
             """);
     }
 
@@ -1226,11 +1548,11 @@ internal static class SkillCommands
 
     private static MetaRunDerivedProposalDetail ApplyReviewDetail(
         MetaRunDerivedProposalDetail detail,
-        MetaRunProposalReviewRecord? review)
+        MetaRunProposalReviewRecord? review,
+        MetaRunProposalProvenanceDetail? provenance,
+        MetaRunProposalLifecycleDetail? lifecycle,
+        MetaRunProposalProvenanceTransition[]? provenanceHistory)
     {
-        if (review is null)
-            return detail;
-
         return new MetaRunDerivedProposalDetail
         {
             Id = detail.Id,
@@ -1244,12 +1566,17 @@ internal static class SkillCommands
             AvailableActions = [.. detail.AvailableActions],
             Checkpoint = detail.Checkpoint,
             Evidence = detail.Evidence,
-            Review = new MetaRunProposalReviewDetail
-            {
-                Status = review.ReviewStatus,
-                ReviewedAtUtc = review.ReviewedAtUtc,
-                Reason = review.Reason
-            },
+            Provenance = provenance,
+            Lifecycle = lifecycle,
+            ProvenanceHistory = provenanceHistory is null ? [] : [.. provenanceHistory],
+            Review = review is null
+                ? null
+                : new MetaRunProposalReviewDetail
+                {
+                    Status = review.ReviewStatus,
+                    ReviewedAtUtc = review.ReviewedAtUtc,
+                    Reason = review.Reason
+                },
             PendingStepId = detail.PendingStepId,
             PendingStepIds = [.. detail.PendingStepIds],
             BlockedStepIds = [.. detail.BlockedStepIds],
@@ -1266,14 +1593,14 @@ internal static class SkillCommands
         string sessionId,
         CancellationToken ct)
     {
-        var candidates = await store.ListProposalsAsync(status: null, kind: LearningProposalKind.MetaRunReview, ct);
+        var candidates = await store.ListProposalsAsync(status: null, kind: LearningProposalKind.MetaRunProposal, ct);
         return candidates
-            .Where(item => TryGetMetaRunReviewMetadata(item, MetaRunReviewMetadata.SessionId, out var value)
+            .Where(item => TryGetMetaRunProposalMetadata(item, MetaRunProposalMetadata.SessionId, out var value)
                 && string.Equals(value, sessionId, StringComparison.Ordinal))
-            .Where(item => TryGetMetaRunReviewMetadata(item, MetaRunReviewMetadata.ProposalId, out _))
+            .Where(item => TryGetMetaRunProposalMetadata(item, MetaRunProposalMetadata.ProposalId, out _))
             .ToDictionary(
-                item => item.Metadata[MetaRunReviewMetadata.ProposalId],
-                item => ToMetaRunProposalReviewRecord(item, sessionId, item.Metadata[MetaRunReviewMetadata.ProposalId]),
+                item => item.Metadata[MetaRunProposalMetadata.ProposalId],
+                item => ToMetaRunProposalReviewRecord(item, sessionId, item.Metadata[MetaRunProposalMetadata.ProposalId]),
                 StringComparer.Ordinal);
     }
 
@@ -1283,16 +1610,167 @@ internal static class SkillCommands
         string proposalId,
         CancellationToken ct)
     {
-        var durableProposal = await store.GetProposalAsync(BuildMetaRunReviewProposalId(sessionId, proposalId), ct);
+        var durableProposal = await store.GetProposalAsync(BuildMetaRunProposalDurableId(sessionId, proposalId), ct);
         return durableProposal is null
             ? null
             : ToMetaRunProposalReviewRecord(durableProposal, sessionId, proposalId);
     }
 
-    private static string BuildMetaRunReviewProposalId(string sessionId, string proposalId)
-        => $"meta-run-review:{sessionId}:{proposalId}";
+    private static async ValueTask<LearningProposal?> GetMetaRunLearningProposalAsync(
+        ILearningProposalStore store,
+        string sessionId,
+        string proposalId,
+        CancellationToken ct)
+        => await store.GetProposalAsync(BuildMetaRunProposalDurableId(sessionId, proposalId), ct);
 
-    private static bool TryGetMetaRunReviewMetadata(LearningProposal proposal, string key, out string value)
+    private static void PopulateMetaRunProposalProvenanceMetadata(
+        IDictionary<string, string> metadata,
+        SessionMetaRunRecord run,
+        SessionMetaExecutionCheckpoint? checkpoint,
+        DateTimeOffset capturedAtUtc)
+    {
+        metadata[MetaRunProposalMetadata.ProvenanceSnapshotVersion] = "v1";
+        metadata[MetaRunProposalMetadata.ProvenanceCapturedAtUtc] = capturedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        metadata[MetaRunProposalMetadata.ProvenanceRunStatus] = run.Status;
+        metadata[MetaRunProposalMetadata.ProvenanceRunStartedAtUtc] = run.StartedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        metadata[MetaRunProposalMetadata.ProvenanceRunCompletedAtUtc] = run.CompletedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        metadata[MetaRunProposalMetadata.ProvenanceStepCount] = run.StepResults.Count.ToString(CultureInfo.InvariantCulture);
+        metadata[MetaRunProposalMetadata.ProvenanceStepIds] = string.Join(",", run.StepResults.Select(static step => step.Id));
+
+        if (!string.IsNullOrWhiteSpace(checkpoint?.PendingStepId))
+            metadata[MetaRunProposalMetadata.ProvenanceCheckpointPendingStepId] = checkpoint.PendingStepId;
+
+        metadata[MetaRunProposalMetadata.ProvenanceCheckpointPromptPresent] = (!string.IsNullOrWhiteSpace(checkpoint?.Prompt))
+            .ToString()
+            .ToLowerInvariant();
+    }
+
+    private static MetaRunProposalProvenanceDetail? BuildMetaRunProposalProvenanceDetail(LearningProposal? proposal)
+    {
+        if (proposal is null
+            || !TryGetMetaRunProposalMetadata(proposal, MetaRunProposalMetadata.ProvenanceSnapshotVersion, out var snapshotVersion)
+            || !TryGetMetaRunProposalMetadata(proposal, MetaRunProposalMetadata.ProvenanceCapturedAtUtc, out var capturedAtRaw)
+            || !DateTimeOffset.TryParse(capturedAtRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var capturedAtUtc)
+            || !TryGetMetaRunProposalMetadata(proposal, MetaRunProposalMetadata.ProvenanceRunStatus, out var runStatus)
+            || !TryGetMetaRunProposalMetadata(proposal, MetaRunProposalMetadata.ProvenanceRunStartedAtUtc, out var runStartedRaw)
+            || !DateTimeOffset.TryParse(runStartedRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var runStartedAtUtc)
+            || !TryGetMetaRunProposalMetadata(proposal, MetaRunProposalMetadata.ProvenanceRunCompletedAtUtc, out var runCompletedRaw)
+            || !DateTimeOffset.TryParse(runCompletedRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var runCompletedAtUtc)
+            || !TryGetMetaRunProposalMetadata(proposal, MetaRunProposalMetadata.ProvenanceStepCount, out var stepCountRaw)
+            || !int.TryParse(stepCountRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var stepCount))
+        {
+            return null;
+        }
+
+        proposal.Metadata.TryGetValue(MetaRunProposalMetadata.ProvenanceStepIds, out var stepIdsRaw);
+        proposal.Metadata.TryGetValue(MetaRunProposalMetadata.ProvenanceCheckpointPendingStepId, out var checkpointPendingStepId);
+        proposal.Metadata.TryGetValue(MetaRunProposalMetadata.ProvenanceCheckpointPromptPresent, out var checkpointPromptPresentRaw);
+        var checkpointPromptPresent = string.Equals(checkpointPromptPresentRaw, "true", StringComparison.OrdinalIgnoreCase);
+
+        return new MetaRunProposalProvenanceDetail
+        {
+            SnapshotVersion = snapshotVersion,
+            CapturedAtUtc = capturedAtUtc,
+            RunStatus = runStatus,
+            RunStartedAtUtc = runStartedAtUtc,
+            RunCompletedAtUtc = runCompletedAtUtc,
+            StepCount = stepCount,
+            StepIds = string.IsNullOrWhiteSpace(stepIdsRaw)
+                ? []
+                : [.. stepIdsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
+            CheckpointPendingStepId = string.IsNullOrWhiteSpace(checkpointPendingStepId) ? null : checkpointPendingStepId,
+            CheckpointPromptPresent = checkpointPromptPresent
+        };
+    }
+
+    private static MetaRunProposalLifecycleDetail? BuildMetaRunProposalLifecycleDetail(LearningProposal? proposal)
+    {
+        if (proposal is null)
+            return null;
+
+        return new MetaRunProposalLifecycleDetail
+        {
+            Status = proposal.Status,
+            RolledBack = proposal.RolledBack,
+            ReviewedAtUtc = proposal.ReviewedAtUtc,
+            RolledBackAtUtc = proposal.RolledBackAtUtc,
+            ReviewNotes = proposal.ReviewNotes,
+            RollbackReason = proposal.RollbackReason
+        };
+    }
+
+    private static MetaRunProposalProvenanceTransition[] BuildMetaRunProposalProvenanceHistory(LearningProposal? proposal)
+    {
+        if (proposal is null
+            || !proposal.Metadata.TryGetValue(MetaRunProposalMetadata.TransitionCount, out var countRaw)
+            || !int.TryParse(countRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count)
+            || count <= 0)
+        {
+            return [];
+        }
+
+        var transitions = new List<MetaRunProposalProvenanceTransition>(count);
+        for (var index = 0; index < count; index++)
+        {
+            if (!proposal.Metadata.TryGetValue(BuildMetaRunProposalTransitionMetadataKey(index, MetaRunProposalMetadata.TransitionFieldAction), out var action)
+                || string.IsNullOrWhiteSpace(action)
+                || !proposal.Metadata.TryGetValue(BuildMetaRunProposalTransitionMetadataKey(index, MetaRunProposalMetadata.TransitionFieldFromStatus), out var fromStatus)
+                || string.IsNullOrWhiteSpace(fromStatus)
+                || !proposal.Metadata.TryGetValue(BuildMetaRunProposalTransitionMetadataKey(index, MetaRunProposalMetadata.TransitionFieldToStatus), out var toStatus)
+                || string.IsNullOrWhiteSpace(toStatus)
+                || !proposal.Metadata.TryGetValue(BuildMetaRunProposalTransitionMetadataKey(index, MetaRunProposalMetadata.TransitionFieldChangedAtUtc), out var changedAtRaw)
+                || !DateTimeOffset.TryParse(changedAtRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var changedAtUtc))
+            {
+                continue;
+            }
+
+            proposal.Metadata.TryGetValue(BuildMetaRunProposalTransitionMetadataKey(index, MetaRunProposalMetadata.TransitionFieldReason), out var reasonRaw);
+            transitions.Add(new MetaRunProposalProvenanceTransition
+            {
+                Action = action,
+                FromStatus = fromStatus,
+                ToStatus = toStatus,
+                ChangedAtUtc = changedAtUtc,
+                Reason = string.IsNullOrWhiteSpace(reasonRaw) ? null : reasonRaw
+            });
+        }
+
+        return [.. transitions];
+    }
+
+    private static void AppendMetaRunProposalTransitionMetadata(
+        IDictionary<string, string> metadata,
+        string action,
+        string fromStatus,
+        string toStatus,
+        DateTimeOffset changedAtUtc,
+        string? reason)
+    {
+        var nextIndex = 0;
+        if (metadata.TryGetValue(MetaRunProposalMetadata.TransitionCount, out var countRaw)
+            && int.TryParse(countRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var currentCount)
+            && currentCount > 0)
+        {
+            nextIndex = currentCount;
+        }
+
+        metadata[BuildMetaRunProposalTransitionMetadataKey(nextIndex, MetaRunProposalMetadata.TransitionFieldAction)] = action;
+        metadata[BuildMetaRunProposalTransitionMetadataKey(nextIndex, MetaRunProposalMetadata.TransitionFieldFromStatus)] = fromStatus;
+        metadata[BuildMetaRunProposalTransitionMetadataKey(nextIndex, MetaRunProposalMetadata.TransitionFieldToStatus)] = toStatus;
+        metadata[BuildMetaRunProposalTransitionMetadataKey(nextIndex, MetaRunProposalMetadata.TransitionFieldChangedAtUtc)] = changedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        metadata[BuildMetaRunProposalTransitionMetadataKey(nextIndex, MetaRunProposalMetadata.TransitionFieldReason)] = string.IsNullOrWhiteSpace(reason)
+            ? string.Empty
+            : reason!;
+        metadata[MetaRunProposalMetadata.TransitionCount] = (nextIndex + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string BuildMetaRunProposalTransitionMetadataKey(int index, string field)
+        => $"{MetaRunProposalMetadata.TransitionEntryPrefix}_{index:D4}_{field}";
+
+    private static string BuildMetaRunProposalDurableId(string sessionId, string proposalId)
+        => $"meta-run-proposal:{sessionId}:{proposalId}";
+
+    private static bool TryGetMetaRunProposalMetadata(LearningProposal proposal, string key, out string value)
     {
         if (proposal.Metadata.TryGetValue(key, out var metadataValue) && !string.IsNullOrWhiteSpace(metadataValue))
         {
@@ -1304,6 +1782,103 @@ internal static class SkillCommands
         return false;
     }
 
+    private static bool TryMapMetaRunProposalChangeTarget(string? to, out string reviewStatus, out string lifecycleStatus)
+    {
+        if (string.Equals(to, "accept", StringComparison.OrdinalIgnoreCase))
+        {
+            reviewStatus = MetaRunProposalReviewStatuses.Accepted;
+            lifecycleStatus = LearningProposalStatus.Approved;
+            return true;
+        }
+
+        if (string.Equals(to, "dismiss", StringComparison.OrdinalIgnoreCase))
+        {
+            reviewStatus = MetaRunProposalReviewStatuses.Dismissed;
+            lifecycleStatus = LearningProposalStatus.Rejected;
+            return true;
+        }
+
+        reviewStatus = string.Empty;
+        lifecycleStatus = string.Empty;
+        return false;
+    }
+
+    private static Dictionary<string, string> BuildMetaRunProposalMetadata(
+        LearningProposal? existing,
+        string sessionId,
+        MetaRunDerivedProposalSummary proposal)
+    {
+        var metadata = existing is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(existing.Metadata, StringComparer.Ordinal);
+
+        metadata[MetaRunProposalMetadata.SessionId] = sessionId;
+        metadata[MetaRunProposalMetadata.ProposalId] = proposal.Id;
+        metadata[MetaRunProposalMetadata.RunId] = proposal.RunId;
+        metadata[MetaRunProposalMetadata.ProposalStatus] = proposal.Status;
+        metadata[MetaRunProposalMetadata.ProposalKind] = proposal.Kind;
+        metadata[MetaRunProposalMetadata.Source] = proposal.Source;
+        return metadata;
+    }
+
+    private static LearningProposal BuildUpdatedMetaRunLearningProposal(
+        LearningProposal? existing,
+        MetaRunDerivedProposalSummary proposal,
+        string sessionId,
+        string lifecycleStatus,
+        DateTimeOffset updatedAtUtc,
+        DateTimeOffset? reviewedAtUtc,
+        string? reviewNotes,
+        bool rolledBack,
+        DateTimeOffset? rolledBackAtUtc,
+        string? rollbackReason,
+        Dictionary<string, string> metadata)
+        => new()
+        {
+            Id = existing?.Id ?? BuildMetaRunProposalDurableId(sessionId, proposal.Id),
+            Kind = LearningProposalKind.MetaRunProposal,
+            Status = lifecycleStatus,
+            ActorId = existing?.ActorId,
+            Title = string.IsNullOrWhiteSpace(existing?.Title) ? proposal.Title : existing.Title,
+            Summary = string.IsNullOrWhiteSpace(existing?.Summary) ? proposal.Summary : existing.Summary,
+            SkillName = string.IsNullOrWhiteSpace(existing?.SkillName) ? proposal.SkillName : existing.SkillName,
+            DraftContent = existing?.DraftContent,
+            DraftContentHash = existing?.DraftContentHash,
+            DraftPreview = existing?.DraftPreview,
+            ProfileUpdate = existing?.ProfileUpdate,
+            AppliedProfileBefore = existing?.AppliedProfileBefore,
+            AutomationDraft = existing?.AutomationDraft,
+            AutomationIntent = existing?.AutomationIntent,
+            AutomationQuality = existing?.AutomationQuality,
+            AutomationSuggestionPreview = existing?.AutomationSuggestionPreview,
+            AppliedAutomationId = existing?.AppliedAutomationId,
+            ManagedSkillPath = existing?.ManagedSkillPath,
+            ManagedSkillMetadata = existing?.ManagedSkillMetadata,
+            Metadata = metadata,
+            HarnessEvolution = existing?.HarnessEvolution,
+            SourceSessionIds = existing?.SourceSessionIds ?? [sessionId],
+            SourceTurnIds = existing?.SourceTurnIds ?? [],
+            ToolNames = existing?.ToolNames ?? [],
+            ToolSequence = existing?.ToolSequence ?? [],
+            ToolObservations = existing?.ToolObservations ?? [],
+            FeedbackEvents = existing?.FeedbackEvents ?? [],
+            RepeatedCount = existing?.RepeatedCount ?? 0,
+            ProposalFingerprint = existing?.ProposalFingerprint,
+            RiskLevel = string.IsNullOrWhiteSpace(existing?.RiskLevel) ? LearningProposalRiskLevels.Low : existing.RiskLevel,
+            Confidence = existing?.Confidence ?? 1f,
+            CreatedReason = existing?.CreatedReason ?? "meta_run_proposal_lifecycle",
+            ValidationStatus = existing?.ValidationStatus ?? LearningProposalValidationStatuses.NotRun,
+            ValidationWarnings = existing?.ValidationWarnings ?? [],
+            ValidationErrors = existing?.ValidationErrors ?? [],
+            CreatedAtUtc = existing?.CreatedAtUtc ?? updatedAtUtc,
+            UpdatedAtUtc = updatedAtUtc,
+            ReviewedAtUtc = reviewedAtUtc,
+            ReviewNotes = reviewNotes,
+            RolledBack = rolledBack,
+            RolledBackAtUtc = rolledBackAtUtc,
+            RollbackReason = rollbackReason
+        };
+
     private static MetaRunProposalReviewRecord ToMetaRunProposalReviewRecord(LearningProposal proposal, string sessionId, string proposalId)
         => new()
         {
@@ -1311,7 +1886,9 @@ internal static class SkillCommands
             ProposalId = proposalId,
             ReviewStatus = MapLearningProposalStatusToReviewStatus(proposal.Status),
             ReviewedAtUtc = proposal.ReviewedAtUtc ?? proposal.UpdatedAtUtc,
-            Reason = proposal.ReviewNotes
+            Reason = string.Equals(proposal.Status, LearningProposalStatus.RolledBack, StringComparison.OrdinalIgnoreCase)
+                ? proposal.RollbackReason
+                : proposal.ReviewNotes
         };
 
     private static string MapReviewStatusToLearningProposalStatus(string reviewStatus)
@@ -1319,6 +1896,7 @@ internal static class SkillCommands
         {
             MetaRunProposalReviewStatuses.Accepted => LearningProposalStatus.Approved,
             MetaRunProposalReviewStatuses.Dismissed => LearningProposalStatus.Rejected,
+            MetaRunProposalReviewStatuses.RolledBack => LearningProposalStatus.RolledBack,
             _ => LearningProposalStatus.Pending
         };
 
@@ -1327,17 +1905,35 @@ internal static class SkillCommands
         {
             LearningProposalStatus.Approved => MetaRunProposalReviewStatuses.Accepted,
             LearningProposalStatus.Rejected => MetaRunProposalReviewStatuses.Dismissed,
+            LearningProposalStatus.RolledBack => MetaRunProposalReviewStatuses.RolledBack,
             _ => MetaRunProposalReviewStatuses.Pending
         };
 
-    private static class MetaRunReviewMetadata
+    private static class MetaRunProposalMetadata
     {
-        public const string SessionId = "meta_run_review_session_id";
-        public const string ProposalId = "meta_run_review_proposal_id";
-        public const string RunId = "meta_run_review_run_id";
-        public const string ReviewStatus = "meta_run_review_status";
-        public const string Reason = "meta_run_review_reason";
-        public const string Source = "meta_run_review_source";
+        public const string SessionId = "meta_run_proposal_session_id";
+        public const string ProposalId = "meta_run_proposal_id";
+        public const string RunId = "meta_run_proposal_run_id";
+        public const string ProposalStatus = "meta_run_proposal_status";
+        public const string ProposalKind = "meta_run_proposal_kind";
+        public const string Reason = "meta_run_proposal_reason";
+        public const string Source = "meta_run_proposal_source";
+        public const string ProvenanceSnapshotVersion = "meta_run_proposal_provenance_snapshot_version";
+        public const string ProvenanceCapturedAtUtc = "meta_run_proposal_provenance_captured_at_utc";
+        public const string ProvenanceRunStatus = "meta_run_proposal_provenance_run_status";
+        public const string ProvenanceRunStartedAtUtc = "meta_run_proposal_provenance_run_started_at_utc";
+        public const string ProvenanceRunCompletedAtUtc = "meta_run_proposal_provenance_run_completed_at_utc";
+        public const string ProvenanceStepCount = "meta_run_proposal_provenance_step_count";
+        public const string ProvenanceStepIds = "meta_run_proposal_provenance_step_ids";
+        public const string ProvenanceCheckpointPendingStepId = "meta_run_proposal_provenance_checkpoint_pending_step_id";
+        public const string ProvenanceCheckpointPromptPresent = "meta_run_proposal_provenance_checkpoint_prompt_present";
+        public const string TransitionCount = "meta_run_proposal_transition_count";
+        public const string TransitionEntryPrefix = "meta_run_proposal_transition";
+        public const string TransitionFieldAction = "action";
+        public const string TransitionFieldFromStatus = "from_status";
+        public const string TransitionFieldToStatus = "to_status";
+        public const string TransitionFieldChangedAtUtc = "changed_at_utc";
+        public const string TransitionFieldReason = "reason";
     }
 
     private static void WriteDerivedProposalListText(MetaRunDerivedProposalListResponse response)
@@ -1410,6 +2006,46 @@ internal static class SkillCommands
             if (!string.IsNullOrWhiteSpace(proposal.Evidence.FinalText))
                 Console.WriteLine($"Evidence final text: {proposal.Evidence.FinalText}");
         }
+        if (proposal.Provenance is not null)
+        {
+            Console.WriteLine("Provenance:");
+            Console.WriteLine($"Snapshot version: {proposal.Provenance.SnapshotVersion}");
+            Console.WriteLine($"Captured at (UTC): {proposal.Provenance.CapturedAtUtc:O}");
+            Console.WriteLine($"Run status snapshot: {proposal.Provenance.RunStatus}");
+            Console.WriteLine($"Step count snapshot: {proposal.Provenance.StepCount}");
+            if (proposal.Provenance.StepIds.Length > 0)
+                Console.WriteLine($"Step ids snapshot: {string.Join(", ", proposal.Provenance.StepIds)}");
+            if (!string.IsNullOrWhiteSpace(proposal.Provenance.CheckpointPendingStepId))
+                Console.WriteLine($"Checkpoint pending step snapshot: {proposal.Provenance.CheckpointPendingStepId}");
+            Console.WriteLine(proposal.Provenance.CheckpointPromptPresent
+                ? "Checkpoint prompt snapshot: yes"
+                : "Checkpoint prompt snapshot: no");
+        }
+        if (proposal.Lifecycle is not null)
+        {
+            Console.WriteLine("Lifecycle:");
+            Console.WriteLine($"Status: {proposal.Lifecycle.Status}");
+            Console.WriteLine(proposal.Lifecycle.RolledBack ? "Rolled back: yes" : "Rolled back: no");
+            if (proposal.Lifecycle.ReviewedAtUtc is not null)
+                Console.WriteLine($"Reviewed at (UTC): {proposal.Lifecycle.ReviewedAtUtc:O}");
+            if (proposal.Lifecycle.RolledBackAtUtc is not null)
+                Console.WriteLine($"Rolled back at (UTC): {proposal.Lifecycle.RolledBackAtUtc:O}");
+            if (!string.IsNullOrWhiteSpace(proposal.Lifecycle.ReviewNotes))
+                Console.WriteLine($"Review notes: {proposal.Lifecycle.ReviewNotes}");
+            if (!string.IsNullOrWhiteSpace(proposal.Lifecycle.RollbackReason))
+                Console.WriteLine($"Rollback reason: {proposal.Lifecycle.RollbackReason}");
+        }
+        if (proposal.ProvenanceHistory.Length > 0)
+        {
+            Console.WriteLine("Provenance history:");
+            foreach (var transition in proposal.ProvenanceHistory)
+            {
+                var detail = $"- {transition.Action} | {transition.FromStatus} -> {transition.ToStatus} | changedAtUtc={transition.ChangedAtUtc:O}";
+                if (!string.IsNullOrWhiteSpace(transition.Reason))
+                    detail += $" | reason={transition.Reason}";
+                Console.WriteLine(detail);
+            }
+        }
         if (proposal.TimelineStepIds.Length > 0)
             Console.WriteLine($"Timeline steps: {string.Join(", ", proposal.TimelineStepIds)}");
         if (proposal.Steps.Length > 0)
@@ -1438,6 +2074,7 @@ internal static class SkillCommands
         Console.WriteLine($"Session: {response.SessionId}");
         Console.WriteLine($"Proposal: {response.ProposalId}");
         Console.WriteLine($"Review status: {response.ReviewStatus}");
+        Console.WriteLine($"Lifecycle status: {response.LifecycleStatus}");
         Console.WriteLine($"Reviewed at (UTC): {response.ReviewedAtUtc:O}");
         Console.WriteLine(response.AlreadyReviewed ? "Already reviewed: yes" : "Already reviewed: no");
         if (!string.IsNullOrWhiteSpace(response.Reason))
@@ -1447,6 +2084,7 @@ internal static class SkillCommands
     private static MetaRunReplayPreviewResponse BuildReplayPreview(string sessionId, SessionMetaRunRecord run)
     {
         var missingRequirements = GetReplayMissingRequirements(run);
+        var operatorSummary = BuildReplayOperatorSummary(run);
         return new MetaRunReplayPreviewResponse
         {
             SessionId = sessionId,
@@ -1457,7 +2095,9 @@ internal static class SkillCommands
             AvailableArtifacts = GetReplayAvailableArtifacts(run),
             RetainedSteps = GetReplayRetainedSteps(run),
             Plan = GetReplayPlan(run, missingRequirements),
-            MissingRequirements = missingRequirements
+            MissingRequirements = missingRequirements,
+            OperatorSummary = operatorSummary,
+            TriageHints = BuildReplayTriageHints(run, missingRequirements, operatorSummary)
         };
     }
 
@@ -1467,6 +2107,7 @@ internal static class SkillCommands
         SessionMetaExecutionCheckpoint? checkpoint)
     {
         var checkpointSummary = TryBuildReplayCheckpointSummary(run, checkpoint);
+        var operatorSummary = BuildReplayOperatorSummary(run);
         return new MetaRunReplayResultResponse
         {
             SessionId = sessionId,
@@ -1489,10 +2130,13 @@ internal static class SkillCommands
                 FailureCode = step.FailureCode,
                 DurationMs = step.DurationMs,
                 Continued = step.Continued,
-                Source = MetaRunReplayTimelineSources.RunHistory
+                Source = MetaRunReplayTimelineSources.RunHistory,
+                Notes = BuildReplayTimelineNotes(step)
             })],
             Checkpoint = checkpointSummary,
-            ProposalSummary = new MetaRunProposalSummary()
+            ProposalSummary = new MetaRunProposalSummary(),
+            OperatorSummary = operatorSummary,
+            TriageHints = BuildReplayTriageHints(run, [], operatorSummary)
         };
     }
 
@@ -1533,6 +2177,8 @@ internal static class SkillCommands
             Console.WriteLine($"Error code: {replay.ErrorCode}");
         if (!string.IsNullOrWhiteSpace(replay.Error))
             Console.WriteLine($"Error: {replay.Error}");
+
+        WriteReplayOperatorDiagnosticsText(replay.OperatorSummary, replay.TriageHints);
 
         Console.WriteLine("Timeline:");
         foreach (var item in replay.Timeline)
@@ -1620,6 +2266,18 @@ internal static class SkillCommands
             }
         };
 
+        if (run.StepResults.Any(static step =>
+                string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase)
+                && step.ExecutionEvidence is null))
+        {
+            requirements.Add(new MetaRunReplayRequirementPreview
+            {
+                Name = MetaRunReplayRequirementNames.SkillExecInputs,
+                Kind = MetaRunReplayRequirementKinds.NotPersisted,
+                Reason = MetaRunReplayRequirementReasons.SkillExecInputsNotPersisted
+            });
+        }
+
         if (!HasRetainedSteps(run))
         {
             requirements.Add(new MetaRunReplayRequirementPreview
@@ -1704,8 +2362,176 @@ internal static class SkillCommands
             ? MetaRunReplayPlanSummaries.AuditableNotReplayable
             : MetaRunReplayPlanSummaries.MetadataOnlyNotReplayable;
 
+    private static MetaRunReplayOperatorSummary BuildReplayOperatorSummary(SessionMetaRunRecord run)
+    {
+        return new MetaRunReplayOperatorSummary
+        {
+            TotalSteps = run.StepResults.Count,
+            FailedSteps = run.StepResults.Count(static step =>
+                string.Equals(step.Status, "failed", StringComparison.OrdinalIgnoreCase)
+                || !string.IsNullOrWhiteSpace(step.FailureCode)),
+            ContinuedSteps = run.StepResults.Count(static step => step.Continued),
+            SkillExecSteps = run.StepResults.Count(static step => string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase)),
+            SkillExecStepsWithoutEvidence = run.StepResults.Count(static step =>
+                string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase)
+                && step.ExecutionEvidence is null),
+            StepKinds = [.. run.StepResults
+                .GroupBy(static step => step.Kind, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(static group => group.Count())
+                .ThenBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(static group => new MetaRunReplayCountBucket
+                {
+                    Name = group.Key,
+                    Count = group.Count()
+                })],
+            FailureClusters = [.. run.StepResults
+                .Where(static step => !string.IsNullOrWhiteSpace(step.FailureCode))
+                .GroupBy(static step => step.FailureCode!, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(static group => group.Count())
+                .ThenBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(static group => new MetaRunReplayCountBucket
+                {
+                    Name = group.Key,
+                    Count = group.Count()
+                })]
+        };
+    }
+
+    private static MetaRunReplayTriageHint[] BuildReplayTriageHints(
+        SessionMetaRunRecord run,
+        MetaRunReplayRequirementPreview[] missingRequirements,
+        MetaRunReplayOperatorSummary summary)
+    {
+        var hints = new List<MetaRunReplayTriageHint>();
+
+        var missingSkillExecInputs = missingRequirements.Any(static requirement =>
+            string.Equals(requirement.Name, MetaRunReplayRequirementNames.SkillExecInputs, StringComparison.Ordinal));
+        if (missingSkillExecInputs)
+        {
+            hints.Add(new MetaRunReplayTriageHint
+            {
+                Code = MetaRunReplayTriageHintCodes.SkillExecInputsNotPersisted,
+                Priority = 1,
+                Message = "Persist skill_exec execution evidence so replay can include stdin and parse diagnostics.",
+                StepIds = [.. run.StepResults
+                    .Where(static step => string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase) && step.ExecutionEvidence is null)
+                    .Select(static step => step.Id)],
+                RequirementNames = [MetaRunReplayRequirementNames.SkillExecInputs]
+            });
+        }
+
+        var parseModeAnomalyStepIds = run.StepResults
+            .Where(static step =>
+                string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase)
+                && step.ExecutionEvidence is not null
+                && !string.Equals(step.ExecutionEvidence.ParseMode, "text", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(step.ExecutionEvidence.ParseMode, "json", StringComparison.OrdinalIgnoreCase))
+            .Select(static step => step.Id)
+            .ToArray();
+        if (parseModeAnomalyStepIds.Length > 0)
+        {
+            hints.Add(new MetaRunReplayTriageHint
+            {
+                Code = MetaRunReplayTriageHintCodes.SkillExecParseModeAnomaly,
+                Priority = 2,
+                Message = "Found skill_exec parse_mode values outside supported text/json set; validate skill definitions and evidence snapshots.",
+                StepIds = parseModeAnomalyStepIds
+            });
+        }
+
+        var likelyTruncatedCommandStepIds = run.StepResults
+            .Where(static step =>
+                string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase)
+                && step.ExecutionEvidence is not null
+                && IsLikelyTruncatedCommandPreview(step.ExecutionEvidence.CommandPreview))
+            .Select(static step => step.Id)
+            .ToArray();
+        if (likelyTruncatedCommandStepIds.Length > 0)
+        {
+            hints.Add(new MetaRunReplayTriageHint
+            {
+                Code = MetaRunReplayTriageHintCodes.SkillExecCommandPreviewPossiblyTruncated,
+                Priority = 3,
+                Message = "Command preview appears truncated; check original skill_exec args for full command context.",
+                StepIds = likelyTruncatedCommandStepIds
+            });
+        }
+
+        var dominantFailure = summary.FailureClusters.FirstOrDefault();
+        if (dominantFailure is not null)
+        {
+            hints.Add(new MetaRunReplayTriageHint
+            {
+                Code = MetaRunReplayTriageHintCodes.DominantFailureCluster,
+                Priority = 4,
+                Message = $"Dominant failure cluster is '{dominantFailure.Name}' across {dominantFailure.Count} step(s); prioritize this class first.",
+                StepIds = [.. run.StepResults
+                    .Where(step => string.Equals(step.FailureCode, dominantFailure.Name, StringComparison.OrdinalIgnoreCase))
+                    .Select(static step => step.Id)]
+            });
+        }
+
+        return [.. hints
+            .OrderBy(static hint => hint.Priority)
+            .ThenBy(static hint => hint.Code, StringComparer.OrdinalIgnoreCase)];
+    }
+
+    private static bool IsLikelyTruncatedCommandPreview(string? commandPreview)
+    {
+        if (string.IsNullOrWhiteSpace(commandPreview))
+            return false;
+
+        return commandPreview.EndsWith("...", StringComparison.Ordinal)
+            || commandPreview.EndsWith("…", StringComparison.Ordinal);
+    }
+
+    private static void WriteReplayOperatorDiagnosticsText(
+        MetaRunReplayOperatorSummary summary,
+        MetaRunReplayTriageHint[] triageHints)
+    {
+        Console.WriteLine("Operator summary:");
+        Console.WriteLine($"Total steps: {summary.TotalSteps}");
+        Console.WriteLine($"Failed steps: {summary.FailedSteps}");
+        Console.WriteLine($"Continued steps: {summary.ContinuedSteps}");
+        Console.WriteLine($"Skill exec steps: {summary.SkillExecSteps}");
+        Console.WriteLine($"Skill exec without evidence: {summary.SkillExecStepsWithoutEvidence}");
+
+        if (summary.StepKinds.Length > 0)
+            Console.WriteLine($"Step kind mix: {string.Join(", ", summary.StepKinds.Select(static item => $"{item.Name}={item.Count}"))}");
+
+        if (summary.FailureClusters.Length > 0)
+            Console.WriteLine($"Failure clusters: {string.Join(", ", summary.FailureClusters.Select(static item => $"{item.Name}={item.Count}"))}");
+
+        if (triageHints.Length == 0)
+            return;
+
+        Console.WriteLine("Priority triage:");
+        foreach (var hint in triageHints)
+        {
+            var line = $"- P{hint.Priority} {hint.Code}: {hint.Message}";
+            if (hint.StepIds.Length > 0)
+                line += $" | steps={string.Join(",", hint.StepIds)}";
+            if (hint.RequirementNames.Length > 0)
+                line += $" | requirements={string.Join(",", hint.RequirementNames)}";
+
+            Console.WriteLine(line);
+        }
+    }
+
     private static bool HasRetainedSteps(SessionMetaRunRecord run)
         => run.StepResults.Count > 0;
+
+    private static string? BuildReplayTimelineNotes(SessionMetaStepResult step)
+    {
+        if (!string.Equals(step.Kind, "skill_exec", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var evidence = step.ExecutionEvidence;
+        if (evidence is null)
+            return null;
+
+        return $"input_mode={evidence.InputMode}; stdin_bytes={evidence.StdinBytes}; parse_mode={evidence.ParseMode}; command={evidence.CommandPreview}";
+    }
 
     internal sealed class SkillCommandInspection
     {

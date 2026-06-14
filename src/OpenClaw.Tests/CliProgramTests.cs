@@ -112,6 +112,27 @@ public sealed class CliProgramTests
     }
 
     [Fact]
+    public async Task Main_Help_ListsSkillsMetaRunsProposalLifecycleCommands()
+    {
+        var previousOut = Console.Out;
+        using var output = new StringWriter();
+        try
+        {
+            Console.SetOut(output);
+
+            var exitCode = await OpenClaw.Cli.Program.Main(["--help"]);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("openclaw skills meta-runs proposals rollback <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]", output.ToString(), StringComparison.Ordinal);
+            Assert.Contains("openclaw skills meta-runs proposals change <session-id> --proposal <id> --to <accept|dismiss> [--reason <text>] [--storage <path>] [--json]", output.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+        }
+    }
+
+    [Fact]
     public async Task Main_ModelsHelp_ListsInstallOptions()
     {
         var previousOut = Console.Out;

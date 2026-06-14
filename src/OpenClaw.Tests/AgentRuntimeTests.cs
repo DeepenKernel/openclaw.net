@@ -2399,9 +2399,18 @@ public class AgentRuntimeTests
                     }
                 ]);
 
-            var result = await InvokeMetaSkillAsync(agent, new Session { Id = "sess", SenderId = "u", ChannelId = "c" }, "meta-flow", "incident-stdin", CancellationToken.None);
+            var session = new Session { Id = "sess", SenderId = "u", ChannelId = "c" };
+            var result = await InvokeMetaSkillAsync(agent, session, "meta-flow", "incident-stdin", CancellationToken.None);
 
             Assert.Equal("stdin:incident-stdin", result.Trim());
+
+            var run = Assert.Single(session.MetaRunHistory);
+            var step = Assert.Single(run.StepResults);
+            Assert.Equal("skill_exec", step.Kind);
+            Assert.NotNull(step.ExecutionEvidence);
+            Assert.Equal("stdin", step.ExecutionEvidence!.InputMode);
+            Assert.True(step.ExecutionEvidence.StdinBytes > 0);
+            Assert.Contains("echo-stdin.ps1", step.ExecutionEvidence.CommandPreview, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

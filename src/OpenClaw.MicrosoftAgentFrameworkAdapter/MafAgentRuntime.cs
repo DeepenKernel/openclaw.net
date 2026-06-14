@@ -1104,7 +1104,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
                             resultStatus,
                             failureCode,
                             stepSw.Elapsed.TotalMilliseconds,
-                            Continued: !completed && continueOnError));
+                            Continued: !completed && continueOnError,
+                            ExecutionEvidence: BuildSkillExecExecutionEvidence(step.SkillExecEntrypoint, renderedArgs, renderedStdin, step.SkillExecParseMode)));
 
                         if (completed)
                         {
@@ -1585,7 +1586,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 Status = result.Status,
                 FailureCode = result.FailureCode,
                 DurationMs = result.DurationMs,
-                Continued = result.Continued
+                Continued = result.Continued,
+                ExecutionEvidence = result.ExecutionEvidence
             }).ToList()
         });
     }
@@ -1771,8 +1773,34 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 Status = result.Status,
                 FailureCode = result.FailureCode,
                 DurationMs = result.DurationMs,
-                Continued = result.Continued
+                Continued = result.Continued,
+                ExecutionEvidence = result.ExecutionEvidence
             }).ToList()
+        };
+    }
+
+    private static SessionMetaStepExecutionEvidence? BuildSkillExecExecutionEvidence(
+        string? entrypoint,
+        IReadOnlyList<string> renderedArgs,
+        string? renderedStdin,
+        string? parseMode)
+    {
+        var hasEntrypoint = !string.IsNullOrWhiteSpace(entrypoint);
+        if (!hasEntrypoint && renderedArgs.Count == 0)
+            return null;
+
+        var commandParts = new List<string>(5);
+        if (hasEntrypoint)
+            commandParts.Add(entrypoint!);
+        commandParts.AddRange(renderedArgs.Take(4));
+        var commandPreview = string.Join(" ", commandParts);
+        var hasStdin = !string.IsNullOrEmpty(renderedStdin);
+        return new SessionMetaStepExecutionEvidence
+        {
+            CommandPreview = commandPreview,
+            InputMode = hasStdin ? "stdin" : "args",
+            StdinBytes = hasStdin ? System.Text.Encoding.UTF8.GetByteCount(renderedStdin!) : 0,
+            ParseMode = string.IsNullOrWhiteSpace(parseMode) ? "text" : parseMode
         };
     }
 
@@ -2183,7 +2211,14 @@ public sealed class MafAgentRuntime : IAgentRuntime
         return DateTimeOffset.UtcNow >= deadline;
     }
 
-    private readonly record struct MetaStepExecutionResult(string Id, string Kind, string Status, string? FailureCode, double DurationMs, bool Continued);
+    private readonly record struct MetaStepExecutionResult(
+        string Id,
+        string Kind,
+        string Status,
+        string? FailureCode,
+        double DurationMs,
+        bool Continued,
+        SessionMetaStepExecutionEvidence? ExecutionEvidence = null);
 
     private static Dictionary<string, object?> DeserializeStepArgs(string? withJson)
     {

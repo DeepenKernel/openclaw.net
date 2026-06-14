@@ -128,6 +128,8 @@ internal static class Program
               openclaw skills meta-runs proposals show <session-id> --proposal <id> [--storage <path>] [--json]
               openclaw skills meta-runs proposals accept <session-id> --proposal <id> [--storage <path>] [--json]
               openclaw skills meta-runs proposals dismiss <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
+              openclaw skills meta-runs proposals rollback <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
+              openclaw skills meta-runs proposals change <session-id> --proposal <id> --to <accept|dismiss> [--reason <text>] [--storage <path>] [--json]
               openclaw clawhub [wrapper options] [--] <clawhub args...>
 
             Common options:

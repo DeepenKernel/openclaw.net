@@ -19,6 +19,7 @@ public static class LearningProposalKind
     public const string AutomationSuggestion = "automation_suggestion";
     public const string HarnessChange = "harness_change";
     public const string MetaRunReview = "meta_run_review";
+    public const string MetaRunProposal = "meta_run_proposal";
 }
 
 public static class LearningProposalStatus

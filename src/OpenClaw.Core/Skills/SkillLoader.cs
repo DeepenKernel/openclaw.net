@@ -1559,6 +1559,18 @@ public static class SkillLoader
             timeoutSeconds = parsedTimeout;
         }
 
+        string? skipIf = null;
+        if (clarifyElement.Value.TryGetProperty("skip_if", out var skipIfElement))
+        {
+            if (skipIfElement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(skipIfElement.GetString()))
+            {
+                errorCode = "invalid_clarify_schema";
+                return false;
+            }
+
+            skipIf = skipIfElement.GetString();
+        }
+
         var fields = new List<MetaClarifyField>();
         var fieldNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (clarifyElement.Value.TryGetProperty("fields", out var fieldsElement))
@@ -1733,6 +1745,7 @@ public static class SkillLoader
             ExtractNaturalLanguage = extractNaturalLanguage,
             Fields = fields,
             CancelWords = cancelWords,
+            SkipIf = skipIf,
             TimeoutSeconds = timeoutSeconds
         };
 
@@ -1871,7 +1884,7 @@ public static class SkillLoader
     }
 
     private static bool IsSupportedClarifyProperty(string propertyName)
-        => propertyName is "mode" or "extract_natural_language" or "cancel_words" or "timeout_seconds" or "fields";
+        => propertyName is "mode" or "extract_natural_language" or "cancel_words" or "skip_if" or "timeout_seconds" or "fields";
 
     private static bool IsSupportedClarifyFieldProperty(string propertyName)
         => propertyName is "name" or "type" or "required" or "options" or "min_length" or "max_length" or "min" or "max" or "default";
@@ -2263,6 +2276,32 @@ public static class SkillLoader
             {
                 logger.LogDebug("Skill '{Name}' skipped (env var '{Var}' not set)", skill.Name, envVar);
                 return false;
+            }
+        }
+
+        if (skill.Kind == SkillKind.Meta && config.MetaSkill.Enabled)
+        {
+            if (config.MetaSkill.AllowedRiskLevels.Length > 0)
+            {
+                var risk = skill.Metadata.Risk ?? string.Empty;
+                if (!config.MetaSkill.AllowedRiskLevels.Contains(risk, StringComparer.OrdinalIgnoreCase))
+                {
+                    logger.LogDebug("Skill '{Name}' skipped (risk '{Risk}' not allowed)", skill.Name, string.IsNullOrWhiteSpace(risk) ? "(unset)" : risk);
+                    return false;
+                }
+            }
+
+            if (config.MetaSkill.RequiredCapabilities.Length > 0)
+            {
+                var declaredCapabilities = new HashSet<string>(skill.Metadata.Capabilities, StringComparer.OrdinalIgnoreCase);
+                foreach (var requiredCapability in config.MetaSkill.RequiredCapabilities)
+                {
+                    if (declaredCapabilities.Contains(requiredCapability))
+                        continue;
+
+                    logger.LogDebug("Skill '{Name}' skipped (required capability '{Capability}' missing)", skill.Name, requiredCapability);
+                    return false;
+                }
             }
         }
 

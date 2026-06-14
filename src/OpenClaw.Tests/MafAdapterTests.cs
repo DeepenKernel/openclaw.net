@@ -1257,6 +1257,79 @@ public sealed class MafAdapterTests
     }
 
     [Fact]
+    public async Task MafAgentRuntime_ExecuteMetaSkillAsync_RejectsNestedMetaDelegation()
+    {
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-meta-nested-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var nestedMeta = new SkillDefinition
+            {
+                Name = "nested-meta",
+                Description = "nested meta",
+                Instructions = "...",
+                Location = "/skills/nested-meta",
+                Kind = SkillKind.Meta,
+                Composition = new MetaSkillComposition
+                {
+                    Steps =
+                    [
+                        new MetaSkillStepDefinition
+                        {
+                            Id = "ask",
+                            Kind = "user_input",
+                            WithJson = "{}"
+                        }
+                    ]
+                }
+            };
+
+            var outerMeta = new SkillDefinition
+            {
+                Name = "outer-meta",
+                Description = "outer meta",
+                Instructions = "...",
+                Location = "/skills/outer-meta",
+                Kind = SkillKind.Meta,
+                Composition = new MetaSkillComposition
+                {
+                    Steps =
+                    [
+                        new MetaSkillStepDefinition
+                        {
+                            Id = "delegate",
+                            Kind = "skill_exec",
+                            Skill = "nested-meta",
+                            SkillExecEntrypoint = "noop.sh"
+                        }
+                    ]
+                }
+            };
+
+            var runtime = CreateRuntime(
+                storagePath,
+                new TestLlmExecutionService(),
+                new MafOptions(),
+                skills: [nestedMeta, outerMeta]);
+            var session = CreateSession("maf-meta-nested");
+
+            var result = await InvokeMafMetaSkillAsync(runtime, session, "outer-meta", "hello", CancellationToken.None);
+
+            Assert.Contains("cannot compose meta skill 'nested-meta'", result, StringComparison.OrdinalIgnoreCase);
+            var run = Assert.Single(session.MetaRunHistory);
+            Assert.Equal("failed", run.Status);
+            Assert.Equal("meta_step_error", run.ErrorCode);
+            Assert.Contains("cannot compose meta skill 'nested-meta'", run.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(session.MetaExecutionCheckpoint);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MafAgentRuntime_ExecuteMetaSkillAsync_PlanChangedAfterPause_DropsStaleCompletedStepState()
     {
         var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-meta-stale-checkpoint-tests", Guid.NewGuid().ToString("N"));
@@ -1752,6 +1825,61 @@ public sealed class MafAdapterTests
             var result = await InvokeMafMetaSkillAsync(runtime, session, "meta-flow", "{\"topic\":\"OpenSquilla\"}", CancellationToken.None);
 
             Assert.Equal("{\"topic\":\"OpenSquilla\",\"priority\":\"medium\"}", result);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_ExecuteMetaSkillAsync_ClarifySkipIf_BypassesPromptAndCompletes()
+    {
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-meta-skip-if-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                new TestLlmExecutionService(),
+                new MafOptions(),
+                skills:
+                [
+                    new SkillDefinition
+                    {
+                        Name = "meta-flow",
+                        Description = "meta flow",
+                        Instructions = "...",
+                        Location = "/skills/meta-flow",
+                        Kind = SkillKind.Meta,
+                        FinalTextMode = "step:ask",
+                        Composition = new MetaSkillComposition
+                        {
+                            Steps =
+                            [
+                                new MetaSkillStepDefinition
+                                {
+                                    Id = "ask",
+                                    Kind = "user_input",
+                                    Clarify = new MetaClarifySchema
+                                    {
+                                        SkipIf = "inputs.user_message == ''"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]);
+
+            var session = CreateSession("maf-meta-skip-if");
+            var result = await InvokeMafMetaSkillAsync(runtime, session, "meta-flow", string.Empty, CancellationToken.None);
+
+            Assert.True(string.IsNullOrEmpty(result));
+            Assert.Null(session.MetaExecutionCheckpoint);
+            var run = Assert.Single(session.MetaRunHistory);
+            var step = Assert.Single(run.StepResults);
+            Assert.Equal("completed", step.Status);
         }
         finally
         {

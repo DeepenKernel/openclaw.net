@@ -1985,7 +1985,7 @@ public sealed class AgentRuntime : IAgentRuntime
         if (steps is null || steps.Count == 0)
             return $"Error: Meta skill '{metaSkill.Name}' has no executable composition steps.";
 
-        if (!TryValidateMetaPlan(steps, out var validationError))
+        if (!TryValidateMetaPlan(steps, LoadedSkills, out var validationError))
             return ReturnMetaExecutionOutput(session, metaSkill, finalText: null, stepResults: [], validationError, preserveCheckpoint: false);
 
         var stepById = steps.ToDictionary(static step => step.Id, StringComparer.OrdinalIgnoreCase);
@@ -1999,6 +1999,11 @@ public sealed class AgentRuntime : IAgentRuntime
         var outputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var failureAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var stepResults = new List<MetaStepExecutionResult>(steps.Count);
+        var templateRenderer = new MetaTemplateRenderer();
+        var conditionEvaluator = new MetaConditionEvaluator(templateRenderer);
+        var toolArgumentResolver = new MetaToolArgumentResolver(templateRenderer);
+        var clarifyValidator = new MetaClarifyValidator();
+        var routePlanner = new MetaRoutePlanner(conditionEvaluator);
         var resumedFromCheckpoint = TryRestoreMetaExecutionCheckpoint(
             session,
             metaSkill.Name,
@@ -2017,6 +2022,10 @@ public sealed class AgentRuntime : IAgentRuntime
                 ? null
                 : steps.FirstOrDefault(step => string.Equals(step.Id, resumedStepId, StringComparison.OrdinalIgnoreCase));
 
+            var resumedSkipClarify = resumedStep?.Clarify is not null
+                && !string.IsNullOrWhiteSpace(resumedStep.Clarify.SkipIf)
+                && conditionEvaluator.Evaluate(resumedStep.Clarify.SkipIf, new MetaExecutionContext(input, outputs));
+
             if (string.IsNullOrWhiteSpace(input) && resumedStep is not null && IsClarifyInputTimedOut(session, metaSkill.Name, resumedStep))
             {
                 stepResults.Add(new MetaStepExecutionResult(resumedStep.Id, resumedStep.Kind, ToolResultStatuses.Failed, "user_input_timeout", 0, Continued: false));
@@ -2032,7 +2041,13 @@ public sealed class AgentRuntime : IAgentRuntime
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(input) && !timeoutHandledByFailureBranch)
+            if (string.IsNullOrWhiteSpace(input) && resumedSkipClarify)
+            {
+                timeoutHandledByFailureBranch = true;
+                ClearMetaExecutionCheckpoint(session, metaSkill.Name);
+            }
+
+            if (string.IsNullOrWhiteSpace(input) && !timeoutHandledByFailureBranch && !resumedSkipClarify)
             {
                 return ReturnMetaExecutionOutput(
                     session,
@@ -2048,11 +2063,6 @@ public sealed class AgentRuntime : IAgentRuntime
             SessionId = session.Id,
             ChannelId = session.ChannelId
         };
-        var templateRenderer = new MetaTemplateRenderer();
-        var conditionEvaluator = new MetaConditionEvaluator(templateRenderer);
-        var toolArgumentResolver = new MetaToolArgumentResolver(templateRenderer);
-        var clarifyValidator = new MetaClarifyValidator();
-        var routePlanner = new MetaRoutePlanner(conditionEvaluator);
 
         if (!resumedFromCheckpoint)
             routePlanner.ApplyInitialRoutingBlocks(steps, blocked, pending);
@@ -2700,8 +2710,21 @@ public sealed class AgentRuntime : IAgentRuntime
                             ?? GetOptionalString(stepArgs, "default_input")
                             ?? stepInput;
 
+                        var skipClarify = step.Clarify is not null
+                            && !string.IsNullOrWhiteSpace(step.Clarify.SkipIf)
+                            && conditionEvaluator.Evaluate(step.Clarify.SkipIf, new MetaExecutionContext(input, outputs));
+
                         if (string.IsNullOrWhiteSpace(userValue))
                         {
+                            if (skipClarify)
+                            {
+                                CompleteMetaStepOutput(step, string.Empty, pending, outputs, failureAliases);
+                                routePlanner.ApplyCompletionRouting(step, new MetaExecutionContext(input, outputs), stepById, blocked, pending, dependentsByStep);
+                                progress = true;
+                                stepResults.Add(new MetaStepExecutionResult(step.Id, step.Kind, ToolResultStatuses.Completed, null, 0, Continued: false));
+                                break;
+                            }
+
                             var prompt = GetOptionalString(stepArgs, "prompt")
                                 ?? $"Please provide input for step '{step.Id}'.";
                             stepResults.Add(new MetaStepExecutionResult(step.Id, step.Kind, ToolResultStatuses.Failed, "user_input_required", 0, Continued: continueOnError));
@@ -3925,7 +3948,7 @@ public sealed class AgentRuntime : IAgentRuntime
             blocked.Remove(target);
     }
 
-    private static bool TryValidateMetaPlan(IReadOnlyList<MetaSkillStepDefinition> steps, out string? error)
+    private static bool TryValidateMetaPlan(IReadOnlyList<MetaSkillStepDefinition> steps, IReadOnlyList<SkillDefinition> loadedSkills, out string? error)
     {
         error = null;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3940,6 +3963,18 @@ public sealed class AgentRuntime : IAgentRuntime
 
         foreach (var step in steps)
         {
+            if (!string.IsNullOrWhiteSpace(step.Skill))
+            {
+                var delegatedSkill = loadedSkills.FirstOrDefault(skill =>
+                    string.Equals(skill.Name, step.Skill, StringComparison.OrdinalIgnoreCase));
+
+                if (delegatedSkill is not null && delegatedSkill.Kind == SkillKind.Meta)
+                {
+                    error = $"Meta execution graph cannot compose meta skill '{delegatedSkill.Name}' from step '{step.Id}'.";
+                    return false;
+                }
+            }
+
             foreach (var dependency in step.DependsOn)
             {
                 if (!seen.Contains(dependency))

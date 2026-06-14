@@ -700,7 +700,7 @@ public sealed class SkillCommandsTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_Create_Json_WithProposalDraft_ShortDescription_ProducesWarning()
+    public async Task RunAsync_Create_Json_WithProposalDraft_ShortDescription_TripsQualityGate()
     {
         var root = CreateTempRoot();
         var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
@@ -720,18 +720,26 @@ public sealed class SkillCommandsTests : IDisposable
 
             var exitCode = await SkillCommands.RunAsync(["create", "Meta Proposal Seed", "--kind", "meta", "--description", "short", "--proposal-draft", "--json"]);
 
-            Assert.Equal(0, exitCode);
-            Assert.Equal(string.Empty, error.ToString());
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, output.ToString());
 
-            using var document = JsonDocument.Parse(output.ToString());
-            var quality = document.RootElement.GetProperty("proposalDraft").GetProperty("quality");
+            using var document = JsonDocument.Parse(error.ToString());
+            Assert.Equal("error", document.RootElement.GetProperty("status").GetString());
+            Assert.Equal("skills create", document.RootElement.GetProperty("command").GetString());
+            Assert.Equal("proposal_draft_quality_gate_failed", document.RootElement.GetProperty("errorCode").GetString());
+            var quality = document.RootElement.GetProperty("quality");
             Assert.Equal(2, quality.GetProperty("checksPassed").GetInt32());
             Assert.Equal(3, quality.GetProperty("checksTotal").GetInt32());
+            Assert.Equal(3, quality.GetProperty("minimumChecksPassed").GetInt32());
             Assert.Equal(1, quality.GetProperty("warnings").GetArrayLength());
             Assert.Equal("description_too_short", quality.GetProperty("warnings")[0].GetString());
-            var checks = quality.GetProperty("checks");
-            Assert.Equal("warn", checks[1].GetProperty("status").GetString());
-            Assert.Equal("Expand description to include expected behavior and boundaries.", checks[1].GetProperty("recommendation").GetString());
+            var blockingChecks = quality.GetProperty("blockingChecks");
+            Assert.Equal(1, blockingChecks.GetArrayLength());
+            Assert.Equal("description_present", blockingChecks[0].GetProperty("id").GetString());
+            Assert.Equal("warn", blockingChecks[0].GetProperty("status").GetString());
+            Assert.Equal("Expand description to include expected behavior and boundaries.", blockingChecks[0].GetProperty("recommendation").GetString());
+
+            Assert.False(Directory.Exists(Path.Combine(workspace, "skills", "meta-proposal-seed")));
         }
         finally
         {
@@ -4453,6 +4461,58 @@ public sealed class SkillCommandsTests : IDisposable
             output.GetStringBuilder().Clear();
             error.GetStringBuilder().Clear();
 
+            var previousOperatorAfterDismiss = Environment.GetEnvironmentVariable("OPENCLAW_OPERATOR_ID");
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", null);
+
+            var deniedExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "change", "sess-phase3-e2e",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--to", "accept",
+                "--reason", "authorization check",
+                "--json"]);
+
+            Assert.Equal(1, deniedExitCode);
+            Assert.Equal(string.Empty, output.ToString());
+            using (var deniedDocument = JsonDocument.Parse(error.ToString()))
+            {
+                Assert.Equal("permission_denied", deniedDocument.RootElement.GetProperty("errorCode").GetString());
+                Assert.Equal("skills meta-runs proposals change", deniedDocument.RootElement.GetProperty("command").GetString());
+            }
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var showAfterDeniedExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "show", "sess-phase3-e2e",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--json"]);
+
+            Assert.Equal(0, showAfterDeniedExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+            using (var showAfterDenied = JsonDocument.Parse(output.ToString()))
+            {
+                var proposalAfterDenied = showAfterDenied.RootElement.GetProperty("proposal");
+                var lifecycleAfterDenied = proposalAfterDenied.GetProperty("lifecycle");
+                Assert.Equal("rolled_back", lifecycleAfterDenied.GetProperty("status").GetString());
+                Assert.True(lifecycleAfterDenied.GetProperty("rolledBack").GetBoolean());
+
+                var auditAfterDenied = proposalAfterDenied.GetProperty("audit");
+                Assert.Equal("rollback", auditAfterDenied.GetProperty("transitionAction").GetString());
+                Assert.Equal("operator-phase3", auditAfterDenied.GetProperty("actorId").GetString());
+
+                var provenanceAfterDenied = proposalAfterDenied.GetProperty("provenanceHistory");
+                Assert.Equal(2, provenanceAfterDenied.GetArrayLength());
+                Assert.Equal("dismiss", provenanceAfterDenied[0].GetProperty("action").GetString());
+                Assert.Equal("rollback", provenanceAfterDenied[1].GetProperty("action").GetString());
+            }
+
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", previousOperatorAfterDismiss);
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
             var changeExitCode = await SkillCommands.RunAsync([
                 "meta-runs", "proposals", "change", "sess-phase3-e2e",
                 "--storage", memoryPath,
@@ -4496,9 +4556,377 @@ public sealed class SkillCommandsTests : IDisposable
         }
         finally
         {
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", previousOperator);
             Console.SetOut(previousOut);
             Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_Phase3_E2E_DismissThenAcceptConflict_PreservesDismissedState()
+    {
+        var root = CreateTempRoot();
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+        var previousOperator = Environment.GetEnvironmentVariable("OPENCLAW_OPERATOR_ID");
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", "operator-phase3-conflict");
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-phase3-e2e-conflict",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-failed-001",
+                            SkillName = "meta-flow",
+                            Status = "failed",
+                            ErrorCode = "tool_failed"
+                        }
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var createExitCode = await SkillCommands.RunAsync([
+                "create", "Phase3 E2E Conflict Meta Skill",
+                "--kind", "meta",
+                "--proposal-draft",
+                "--json"]);
+
+            Assert.Equal(0, createExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var dismissExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "dismiss", "sess-phase3-e2e-conflict",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-failed-001:failed",
+                "--reason", "first review",
+                "--json"]);
+
+            Assert.Equal(0, dismissExitCode);
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var acceptExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-phase3-e2e-conflict",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-failed-001:failed",
+                "--json"]);
+
+            Assert.Equal(1, acceptExitCode);
+            Assert.Equal(string.Empty, output.ToString());
+            using (var conflictDocument = JsonDocument.Parse(error.ToString()))
+            {
+                Assert.Equal("error", conflictDocument.RootElement.GetProperty("status").GetString());
+                Assert.Equal("skills meta-runs proposals accept", conflictDocument.RootElement.GetProperty("command").GetString());
+                Assert.Equal("proposal_already_reviewed", conflictDocument.RootElement.GetProperty("errorCode").GetString());
+                Assert.Contains("already reviewed as dismissed", conflictDocument.RootElement.GetProperty("message").GetString(), StringComparison.Ordinal);
+            }
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var showExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "show", "sess-phase3-e2e-conflict",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-failed-001:failed",
+                "--json"]);
+
+            Assert.Equal(0, showExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            using var showDocument = JsonDocument.Parse(output.ToString());
+            var proposal = showDocument.RootElement.GetProperty("proposal");
+            var lifecycle = proposal.GetProperty("lifecycle");
+            Assert.Equal("rejected", lifecycle.GetProperty("status").GetString());
+            Assert.Equal("first review", lifecycle.GetProperty("reviewNotes").GetString());
+
+            var audit = proposal.GetProperty("audit");
+            Assert.Equal("dismiss", audit.GetProperty("transitionAction").GetString());
+            Assert.Equal("operator-phase3-conflict", audit.GetProperty("actorId").GetString());
+
+            var provenanceHistory = proposal.GetProperty("provenanceHistory");
+            Assert.Equal(1, provenanceHistory.GetArrayLength());
+            Assert.Equal("dismiss", provenanceHistory[0].GetProperty("action").GetString());
+            Assert.Equal("pending", provenanceHistory[0].GetProperty("fromStatus").GetString());
+            Assert.Equal("rejected", provenanceHistory[0].GetProperty("toStatus").GetString());
+            Assert.Equal("first review", provenanceHistory[0].GetProperty("reason").GetString());
+        }
+        finally
+        {
             Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", previousOperator);
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_Phase3_E2E_AcceptThenDismissConflict_PreservesApprovedState()
+    {
+        var root = CreateTempRoot();
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+        var previousOperator = Environment.GetEnvironmentVariable("OPENCLAW_OPERATOR_ID");
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", "operator-phase3-conflict-reverse");
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-phase3-e2e-conflict-reverse",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-paused-001",
+                            SkillName = "meta-flow",
+                            Status = "paused"
+                        }
+                    },
+                    MetaExecutionCheckpoint = new SessionMetaExecutionCheckpoint
+                    {
+                        SkillName = "meta-flow",
+                        PendingStepId = "ask_user"
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var createExitCode = await SkillCommands.RunAsync([
+                "create", "Phase3 E2E Reverse Conflict Meta Skill",
+                "--kind", "meta",
+                "--proposal-draft",
+                "--json"]);
+
+            Assert.Equal(0, createExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var acceptExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-phase3-e2e-conflict-reverse",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--json"]);
+
+            Assert.Equal(0, acceptExitCode);
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var dismissExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "dismiss", "sess-phase3-e2e-conflict-reverse",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--json"]);
+
+            Assert.Equal(1, dismissExitCode);
+            Assert.Equal(string.Empty, output.ToString());
+            using (var conflictDocument = JsonDocument.Parse(error.ToString()))
+            {
+                Assert.Equal("error", conflictDocument.RootElement.GetProperty("status").GetString());
+                Assert.Equal("skills meta-runs proposals dismiss", conflictDocument.RootElement.GetProperty("command").GetString());
+                Assert.Equal("proposal_already_reviewed", conflictDocument.RootElement.GetProperty("errorCode").GetString());
+                Assert.Contains("already reviewed as accepted", conflictDocument.RootElement.GetProperty("message").GetString(), StringComparison.Ordinal);
+            }
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var showExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "show", "sess-phase3-e2e-conflict-reverse",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--json"]);
+
+            Assert.Equal(0, showExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            using var showDocument = JsonDocument.Parse(output.ToString());
+            var proposal = showDocument.RootElement.GetProperty("proposal");
+            var lifecycle = proposal.GetProperty("lifecycle");
+            Assert.Equal("approved", lifecycle.GetProperty("status").GetString());
+            if (lifecycle.TryGetProperty("reviewNotes", out var reviewNotes))
+                Assert.True(string.IsNullOrEmpty(reviewNotes.GetString()));
+
+            var audit = proposal.GetProperty("audit");
+            Assert.Equal("accept", audit.GetProperty("transitionAction").GetString());
+            Assert.Equal("operator-phase3-conflict-reverse", audit.GetProperty("actorId").GetString());
+
+            var provenanceHistory = proposal.GetProperty("provenanceHistory");
+            Assert.Equal(1, provenanceHistory.GetArrayLength());
+            Assert.Equal("accept", provenanceHistory[0].GetProperty("action").GetString());
+            Assert.Equal("pending", provenanceHistory[0].GetProperty("fromStatus").GetString());
+            Assert.Equal("approved", provenanceHistory[0].GetProperty("toStatus").GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", previousOperator);
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_Phase3_E2E_InvalidTransitionAfterAccept_PreservesApprovedState()
+    {
+        var root = CreateTempRoot();
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+        var previousOperator = Environment.GetEnvironmentVariable("OPENCLAW_OPERATOR_ID");
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", "operator-phase3-invalid-transition");
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-phase3-e2e-invalid-transition",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-paused-001",
+                            SkillName = "meta-flow",
+                            Status = "paused"
+                        }
+                    },
+                    MetaExecutionCheckpoint = new SessionMetaExecutionCheckpoint
+                    {
+                        SkillName = "meta-flow",
+                        PendingStepId = "ask_user"
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var createExitCode = await SkillCommands.RunAsync([
+                "create", "Phase3 E2E Invalid Transition Meta Skill",
+                "--kind", "meta",
+                "--proposal-draft",
+                "--json"]);
+
+            Assert.Equal(0, createExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var acceptExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-phase3-e2e-invalid-transition",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--json"]);
+
+            Assert.Equal(0, acceptExitCode);
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var invalidTransitionExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "change", "sess-phase3-e2e-invalid-transition",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--to", "accept",
+                "--json"]);
+
+            Assert.Equal(1, invalidTransitionExitCode);
+            Assert.Equal(string.Empty, output.ToString());
+            using (var invalidTransitionDocument = JsonDocument.Parse(error.ToString()))
+            {
+                Assert.Equal("error", invalidTransitionDocument.RootElement.GetProperty("status").GetString());
+                Assert.Equal("skills meta-runs proposals change", invalidTransitionDocument.RootElement.GetProperty("command").GetString());
+                Assert.Equal("invalid_lifecycle_transition", invalidTransitionDocument.RootElement.GetProperty("errorCode").GetString());
+            }
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+
+            var showExitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "show", "sess-phase3-e2e-invalid-transition",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-001:paused",
+                "--json"]);
+
+            Assert.Equal(0, showExitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            using var showDocument = JsonDocument.Parse(output.ToString());
+            var proposal = showDocument.RootElement.GetProperty("proposal");
+
+            var lifecycle = proposal.GetProperty("lifecycle");
+            Assert.Equal("approved", lifecycle.GetProperty("status").GetString());
+
+            var audit = proposal.GetProperty("audit");
+            Assert.Equal("accept", audit.GetProperty("transitionAction").GetString());
+            Assert.Equal("operator-phase3-invalid-transition", audit.GetProperty("actorId").GetString());
+
+            var provenanceHistory = proposal.GetProperty("provenanceHistory");
+            Assert.Equal(1, provenanceHistory.GetArrayLength());
+            Assert.Equal("accept", provenanceHistory[0].GetProperty("action").GetString());
+            Assert.Equal("pending", provenanceHistory[0].GetProperty("fromStatus").GetString());
+            Assert.Equal("approved", provenanceHistory[0].GetProperty("toStatus").GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OPENCLAW_OPERATOR_ID", previousOperator);
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
             Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
             Directory.Delete(root, recursive: true);
         }

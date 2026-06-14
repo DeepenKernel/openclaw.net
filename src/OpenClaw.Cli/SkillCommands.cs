@@ -1390,13 +1390,25 @@ internal static class SkillCommands
             return 1;
         }
 
-        Directory.CreateDirectory(skillDirectory);
         var kindValue = string.Equals(kind, "meta", StringComparison.OrdinalIgnoreCase) ? "meta" : "standard";
         if (proposalDraftRequested && !string.Equals(kindValue, "meta", StringComparison.OrdinalIgnoreCase))
         {
             WriteCreateError(asJson, "invalid_proposal_draft_kind", "--proposal-draft is only supported for --kind meta.");
             return 2;
         }
+
+        ProposalDraftQuality? proposalDraftQuality = null;
+        if (proposalDraftRequested)
+        {
+            proposalDraftQuality = BuildProposalDraftQuality(name, description, kindValue);
+            if (IsProposalDraftQualityBlocked(proposalDraftQuality))
+            {
+                WriteCreateProposalDraftQualityError(asJson, proposalDraftQuality);
+                return 1;
+            }
+        }
+
+        Directory.CreateDirectory(skillDirectory);
 
         var skillMarkdown = BuildSkillScaffoldMarkdown(name, description, kindValue);
         File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), skillMarkdown);
@@ -1406,7 +1418,6 @@ internal static class SkillCommands
         var proposalDraftStatus = "draft";
         var proposalDraftTitle = $"Meta skill draft proposal: {name}";
         var proposalDraftSummary = "Draft proposal prepared from scaffold metadata. Review and refine before lifecycle actions.";
-        var proposalDraftQuality = BuildProposalDraftQuality(name, description, kindValue);
 
         if (asJson)
         {
@@ -1422,6 +1433,7 @@ internal static class SkillCommands
                 writer.WriteBoolean("overwrote", exists);
                 if (proposalDraftRequested)
                 {
+                    var proposalDraftQualityValue = proposalDraftQuality ?? throw new InvalidOperationException("Proposal draft quality must be available when proposal draft is requested.");
                     writer.WriteStartObject("proposalDraft");
                     writer.WriteBoolean("available", true);
                     writer.WriteString("id", proposalDraftId);
@@ -1430,10 +1442,11 @@ internal static class SkillCommands
                     writer.WriteString("title", proposalDraftTitle);
                     writer.WriteString("summary", proposalDraftSummary);
                     writer.WriteStartObject("quality");
-                    writer.WriteNumber("checksPassed", proposalDraftQuality.ChecksPassed);
-                    writer.WriteNumber("checksTotal", proposalDraftQuality.ChecksTotal);
+                    writer.WriteNumber("checksPassed", proposalDraftQualityValue.ChecksPassed);
+                    writer.WriteNumber("checksTotal", proposalDraftQualityValue.ChecksTotal);
+                    writer.WriteNumber("minimumChecksPassed", proposalDraftQualityValue.ChecksTotal);
                     writer.WriteStartArray("checks");
-                    foreach (var check in proposalDraftQuality.Checks)
+                    foreach (var check in proposalDraftQualityValue.Checks)
                     {
                         writer.WriteStartObject();
                         writer.WriteString("id", check.Id);
@@ -1464,10 +1477,11 @@ internal static class SkillCommands
             Console.WriteLine("Overwrote existing SKILL.md via --force.");
         if (proposalDraftRequested)
         {
+            var proposalDraftQualityValue = proposalDraftQuality ?? throw new InvalidOperationException("Proposal draft quality must be available when proposal draft is requested.");
             Console.WriteLine($"Proposal draft: {proposalDraftStatus}");
             Console.WriteLine($"Proposal kind: {proposalDraftKind}");
             Console.WriteLine($"Proposal id: {proposalDraftId}");
-            Console.WriteLine($"Proposal quality: {proposalDraftQuality.ChecksPassed}/{proposalDraftQuality.ChecksTotal} checks passed");
+            Console.WriteLine($"Proposal quality: {proposalDraftQualityValue.ChecksPassed}/{proposalDraftQualityValue.ChecksTotal} checks passed");
         }
 
         return 0;
@@ -1671,6 +1685,59 @@ internal static class SkillCommands
 
         var checksPassed = checks.Count(static check => string.Equals(check.Status, "pass", StringComparison.Ordinal));
         return new ProposalDraftQuality(checksPassed, checks.Count, checks, warnings);
+    }
+
+    private static bool IsProposalDraftQualityBlocked(ProposalDraftQuality quality) =>
+        quality.Checks.Any(static check => !string.Equals(check.Status, "pass", StringComparison.Ordinal));
+
+    private static void WriteCreateProposalDraftQualityError(bool asJson, ProposalDraftQuality quality)
+    {
+        var blockingChecks = quality.Checks
+            .Where(static check => !string.Equals(check.Status, "pass", StringComparison.Ordinal))
+            .ToArray();
+
+        var message = $"Proposal draft quality gate failed: {quality.ChecksPassed}/{quality.ChecksTotal} checks passed.";
+        if (!asJson)
+        {
+            Console.Error.WriteLine(message);
+            foreach (var check in blockingChecks)
+                Console.Error.WriteLine($"  - {check.Id} [{check.Status}]: {check.Message}");
+            return;
+        }
+
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("status", "error");
+            writer.WriteString("command", "skills create");
+            writer.WriteString("errorCode", "proposal_draft_quality_gate_failed");
+            writer.WriteString("message", message);
+            writer.WriteStartObject("quality");
+            writer.WriteNumber("checksPassed", quality.ChecksPassed);
+            writer.WriteNumber("checksTotal", quality.ChecksTotal);
+            writer.WriteNumber("minimumChecksPassed", quality.ChecksTotal);
+            writer.WriteStartArray("blockingChecks");
+            foreach (var check in blockingChecks)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("id", check.Id);
+                writer.WriteString("status", check.Status);
+                writer.WriteString("message", check.Message);
+                if (!string.IsNullOrWhiteSpace(check.Recommendation))
+                    writer.WriteString("recommendation", check.Recommendation);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteStartArray("warnings");
+            foreach (var warning in quality.Warnings)
+                writer.WriteStringValue(warning);
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        Console.Error.WriteLine(System.Text.Encoding.UTF8.GetString(stream.ToArray()));
     }
 
     private static string NormalizeSingleLineValue(string value) =>

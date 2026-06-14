@@ -1537,6 +1537,71 @@ public class AgentRuntimeTests
     }
 
     [Fact]
+    public async Task ExecuteMetaSkillAsync_RejectsNestedMetaDelegation()
+    {
+        var nestedMeta = new SkillDefinition
+        {
+            Name = "nested-meta",
+            Description = "nested meta",
+            Instructions = "...",
+            Location = "/skills/nested-meta",
+            Kind = SkillKind.Meta,
+            Composition = new MetaSkillComposition
+            {
+                Steps =
+                [
+                    new MetaSkillStepDefinition
+                    {
+                        Id = "ask",
+                        Kind = "user_input",
+                        WithJson = "{}"
+                    }
+                ]
+            }
+        };
+
+        var outerMeta = new SkillDefinition
+        {
+            Name = "outer-meta",
+            Description = "outer meta",
+            Instructions = "...",
+            Location = "/skills/outer-meta",
+            Kind = SkillKind.Meta,
+            Composition = new MetaSkillComposition
+            {
+                Steps =
+                [
+                    new MetaSkillStepDefinition
+                    {
+                        Id = "delegate",
+                        Kind = "skill_exec",
+                        Skill = "nested-meta",
+                        SkillExecEntrypoint = "noop.sh"
+                    }
+                ]
+            }
+        };
+
+        var agent = new AgentRuntime(
+            _chatClient,
+            [],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            skills: [nestedMeta, outerMeta]);
+        var session = new Session { Id = "meta-nested-sess", SenderId = "user1", ChannelId = "test-channel" };
+
+        var result = await InvokeMetaSkillAsync(agent, session, "outer-meta", "hello", CancellationToken.None);
+
+        Assert.Contains("cannot compose meta skill 'nested-meta'", result, StringComparison.OrdinalIgnoreCase);
+        var run = Assert.Single(session.MetaRunHistory);
+        Assert.Equal("failed", run.Status);
+        Assert.Equal("meta_step_error", run.ErrorCode);
+        Assert.Contains("cannot compose meta skill 'nested-meta'", run.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(session.MetaExecutionCheckpoint);
+    }
+
+    [Fact]
     public async Task ExecuteMetaSkillAsync_PlanChangedAfterPause_DropsStaleCompletedStepState()
     {
         var finalTool = new CountingTool("final_tool", "final");
@@ -1949,6 +2014,53 @@ public class AgentRuntimeTests
         var result = await InvokeMetaSkillAsync(agent, new Session { Id = "sess", SenderId = "u", ChannelId = "c" }, "meta-flow", "{\"topic\":\"OpenSquilla\"}", CancellationToken.None);
 
         Assert.Equal("{\"topic\":\"OpenSquilla\",\"priority\":\"medium\"}", result);
+    }
+
+    [Fact]
+    public async Task ExecuteMetaSkillAsync_ClarifySkipIf_BypassesPromptAndCompletes()
+    {
+        var agent = new AgentRuntime(
+            _chatClient,
+            [],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            skills:
+            [
+                new SkillDefinition
+                {
+                    Name = "meta-flow",
+                    Description = "meta flow",
+                    Instructions = "...",
+                    Location = "/skills/meta-flow",
+                    Kind = SkillKind.Meta,
+                    FinalTextMode = "step:ask",
+                    Composition = new MetaSkillComposition
+                    {
+                        Steps =
+                        [
+                            new MetaSkillStepDefinition
+                            {
+                                Id = "ask",
+                                Kind = "user_input",
+                                Clarify = new MetaClarifySchema
+                                {
+                                    SkipIf = "inputs.user_message == ''"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]);
+
+        var session = new Session { Id = "sess-skip-if", SenderId = "u", ChannelId = "c" };
+        var result = await InvokeMetaSkillAsync(agent, session, "meta-flow", string.Empty, CancellationToken.None);
+
+        Assert.True(string.IsNullOrEmpty(result));
+        Assert.Null(session.MetaExecutionCheckpoint);
+        var run = Assert.Single(session.MetaRunHistory);
+        var step = Assert.Single(run.StepResults);
+        Assert.Equal("completed", step.Status);
     }
 
     [Fact]

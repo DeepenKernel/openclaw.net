@@ -303,6 +303,27 @@ public class SkillLoaderTests
     }
 
     [Fact]
+    public void ParseSkillContent_MetaClarifySkipIf_ParsesSuccessfully()
+    {
+        var content = """
+            ---
+            name: meta-clarify-skip-if
+            description: Clarify skip_if support
+            kind: meta
+            composition: {"steps":[{"id":"collect","kind":"user_input","clarify":{"mode":"chat","skip_if":"inputs.user_message == ''"}}]}
+            ---
+            Meta instructions.
+            """;
+
+        var skill = SkillLoader.ParseSkillContent(content, "/skills/meta-clarify-skip-if", SkillSource.Workspace);
+
+        Assert.NotNull(skill);
+        var clarify = skill!.Composition!.Steps[0].Clarify;
+        Assert.NotNull(clarify);
+        Assert.Equal("inputs.user_message == ''", clarify!.SkipIf);
+    }
+
+    [Fact]
     public void ParseSkillContent_MetaWithClarifyCompatibility_ParsesSuccessfully()
     {
         var content = """
@@ -1212,6 +1233,69 @@ public class SkillLoaderTests
             Assert.Single(skills);
             Assert.Equal("test-skill", skills[0].Name);
             Assert.Equal(SkillSource.Workspace, skills[0].Source);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void LoadAll_MetaPolicy_FiltersRiskAndCapabilities()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-test-skills-meta-policy-{Guid.NewGuid():N}");
+        var riskSkillDir = Path.Combine(tempDir, "skills", "meta-risk");
+        var capabilitySkillDir = Path.Combine(tempDir, "skills", "meta-capability");
+        var standardSkillDir = Path.Combine(tempDir, "skills", "standard-skill");
+        Directory.CreateDirectory(riskSkillDir);
+        Directory.CreateDirectory(capabilitySkillDir);
+        Directory.CreateDirectory(standardSkillDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(riskSkillDir, "SKILL.md"), """
+                ---
+                name: meta-risk
+                description: High risk meta skill
+                kind: meta
+                metadata: {"opensquilla":{"risk":"high","capabilities":["tool:search","meta:invoke"]}}
+                composition: {"steps":[{"id":"collect","kind":"user_input","with":{"prompt":"ok?"}}]}
+                ---
+                Instructions.
+                """);
+
+            File.WriteAllText(Path.Combine(capabilitySkillDir, "SKILL.md"), """
+                ---
+                name: meta-capability
+                description: Missing required capability
+                kind: meta
+                metadata: {"opensquilla":{"risk":"low","capabilities":["tool:search"]}}
+                composition: {"steps":[{"id":"collect","kind":"user_input","with":{"prompt":"ok?"}}]}
+                ---
+                Instructions.
+                """);
+
+            File.WriteAllText(Path.Combine(standardSkillDir, "SKILL.md"), """
+                ---
+                name: standard-skill
+                description: Standard skill
+                ---
+                Instructions.
+                """);
+
+            var config = new SkillsConfig
+            {
+                Enabled = true,
+                Load = new SkillLoadConfig { IncludeBundled = false, IncludeManaged = false }
+            };
+            config.MetaSkill.AllowedRiskLevels = ["low"];
+            config.MetaSkill.RequiredCapabilities = ["tool:search", "meta:invoke"];
+
+            var logger = new TestLogger();
+            var skills = SkillLoader.LoadAll(config, tempDir, logger);
+
+            Assert.Single(skills);
+            Assert.Equal("standard-skill", skills[0].Name);
         }
         finally
         {

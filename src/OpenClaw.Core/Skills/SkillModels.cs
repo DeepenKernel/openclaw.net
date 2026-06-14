@@ -47,6 +47,12 @@ public sealed class MetaSkillPolicyConfig
 {
     /// <summary>When false, keep meta skills loaded for inventory/history but reject explicit meta invocation.</summary>
     public bool Enabled { get; set; } = true;
+
+    /// <summary>Optional allowlist of declared risk levels that may load as meta skills.</summary>
+    public string[] AllowedRiskLevels { get; set; } = [];
+
+    /// <summary>Optional capability set that every meta skill must declare to remain eligible.</summary>
+    public string[] RequiredCapabilities { get; set; } = [];
 }
 
 /// <summary>
@@ -268,6 +274,9 @@ public sealed class MetaClarifySchema
 
     /// <summary>Words that cancel the clarify interaction.</summary>
     public IReadOnlyList<string> CancelWords { get; init; } = [];
+
+    /// <summary>Optional expression that skips clarify prompting when truthy.</summary>
+    public string? SkipIf { get; init; }
 
     /// <summary>Optional timeout in seconds for clarify input.</summary>
     public int? TimeoutSeconds { get; init; }

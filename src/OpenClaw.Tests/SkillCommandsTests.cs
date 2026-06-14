@@ -3736,6 +3736,10 @@ public sealed class SkillCommandsTests : IDisposable
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, error.ToString());
 
+            using var response = JsonDocument.Parse(output.ToString());
+            var reviewedAtUtcRaw = response.RootElement.GetProperty("reviewedAtUtc").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(reviewedAtUtcRaw));
+
             var featureStore = new FileFeatureStore(memoryPath);
             var durable = await featureStore.GetProposalAsync(
                 "meta-run-proposal:sess-meta-proposal-durable:meta-run:run-paused-001:paused",
@@ -3756,6 +3760,13 @@ public sealed class SkillCommandsTests : IDisposable
             Assert.Equal("draft", durable.Metadata["meta_run_proposal_provenance_step_ids"]);
             Assert.Equal("ask_user", durable.Metadata["meta_run_proposal_provenance_checkpoint_pending_step_id"]);
             Assert.Equal("false", durable.Metadata["meta_run_proposal_provenance_checkpoint_prompt_present"]);
+            Assert.Equal("opensquilla-authoring-v1", durable.Metadata["meta_run_proposal_accept_gate_profile"]);
+            Assert.Equal("true", durable.Metadata["meta_run_proposal_accept_gate_passed"]);
+            Assert.Equal(string.Empty, durable.Metadata["meta_run_proposal_accept_gate_failed_checks"]);
+            Assert.Equal(
+                DateTimeOffset.Parse(reviewedAtUtcRaw!, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
+                    .ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                durable.Metadata["meta_run_proposal_accept_gate_checked_at_utc"]);
         }
         finally
         {
@@ -4092,6 +4103,20 @@ public sealed class SkillCommandsTests : IDisposable
             var response = document.RootElement;
             Assert.Equal("accepted", response.GetProperty("reviewStatus").GetString());
             Assert.Equal("approved", response.GetProperty("lifecycleStatus").GetString());
+
+            var featureStore = new FileFeatureStore(memoryPath);
+            var durable = await featureStore.GetProposalAsync(
+                "meta-run-proposal:sess-meta-proposals-change-after-rollback-json:meta-run:run-failed-001:failed",
+                CancellationToken.None);
+
+            Assert.NotNull(durable);
+            Assert.Equal("opensquilla-authoring-v1", durable!.Metadata["meta_run_proposal_accept_gate_profile"]);
+            Assert.Equal("true", durable.Metadata["meta_run_proposal_accept_gate_passed"]);
+            Assert.Equal(string.Empty, durable.Metadata["meta_run_proposal_accept_gate_failed_checks"]);
+            Assert.Equal(
+                DateTimeOffset.Parse(response.GetProperty("reviewedAtUtc").GetString()!, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
+                    .ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                durable.Metadata["meta_run_proposal_accept_gate_checked_at_utc"]);
         }
         finally
         {

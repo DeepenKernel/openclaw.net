@@ -84,7 +84,7 @@ public sealed class SkillCommandsMetaGovernanceTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_MetaRuns_Proposals_Accept_Json_LowQuality_ReturnsQualityGateError()
+    public async Task RunAsync_MetaRuns_Proposals_Accept_Json_LowQuality_EmitsGateProfileDetails()
     {
         var root = CreateTempRoot();
         var previousOut = Console.Out;
@@ -133,6 +133,12 @@ public sealed class SkillCommandsMetaGovernanceTests : IDisposable
 
             using var document = JsonDocument.Parse(error.ToString());
             Assert.Equal("proposal_accept_quality_gate_failed", document.RootElement.GetProperty("errorCode").GetString());
+            Assert.True(document.RootElement.TryGetProperty("gate", out var gate));
+            Assert.Equal("opensquilla-authoring-v1", gate.GetProperty("profileId").GetString());
+            Assert.False(gate.GetProperty("passed").GetBoolean());
+            Assert.Contains(
+                gate.GetProperty("failedChecks").EnumerateArray().Select(static item => item.GetString()),
+                item => string.Equals(item, "runtime.failed_evidence_present", StringComparison.Ordinal));
         }
         finally
         {
@@ -215,6 +221,289 @@ public sealed class SkillCommandsMetaGovernanceTests : IDisposable
 
             using var document = JsonDocument.Parse(error.ToString());
             Assert.Equal("proposal_accept_quality_gate_failed", document.RootElement.GetProperty("errorCode").GetString());
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MetaRuns_Proposals_Accept_Json_PausedWithoutCheckpoint_EmitsSafetyBoundaryCheckFailure()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-governance-paused-no-checkpoint",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-paused-no-checkpoint",
+                            SkillName = "meta-flow",
+                            Status = "paused",
+                            StepResults =
+                            {
+                                new SessionMetaStepResult
+                                {
+                                    Id = "draft",
+                                    Kind = "llm_chat",
+                                    Status = "completed"
+                                }
+                            }
+                        }
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-governance-paused-no-checkpoint",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-no-checkpoint:paused",
+                "--json"]);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, output.ToString());
+
+            using var document = JsonDocument.Parse(error.ToString());
+            Assert.Equal("proposal_accept_quality_gate_failed", document.RootElement.GetProperty("errorCode").GetString());
+            Assert.True(document.RootElement.TryGetProperty("gate", out var gate));
+            Assert.Contains(
+                gate.GetProperty("failedChecks").EnumerateArray().Select(static item => item.GetString()),
+                item => string.Equals(item, "safety.paused_checkpoint_consistent", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MetaRuns_Proposals_Accept_Json_SparsePausedRunWithCheckpoint_AllowsAcceptance()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-governance-sparse-paused-with-checkpoint",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-paused-sparse",
+                            SkillName = "meta-flow",
+                            Status = "paused"
+                        }
+                    },
+                    MetaExecutionCheckpoint = new SessionMetaExecutionCheckpoint
+                    {
+                        SkillName = "meta-flow",
+                        PendingStepId = "ask_user"
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-governance-sparse-paused-with-checkpoint",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-paused-sparse:paused",
+                "--json"]);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Equal("accepted", document.RootElement.GetProperty("reviewStatus").GetString());
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MetaRuns_Proposals_Accept_Json_StatusMismatch_FailsTriggerCheck()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-governance-status-mismatch",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-status-mismatch",
+                            SkillName = "meta-flow",
+                            Status = "failed",
+                            ErrorCode = "TOOL_ERROR"
+                        }
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-governance-status-mismatch",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-status-mismatch:paused",
+                "--json"]);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, output.ToString());
+
+            using var document = JsonDocument.Parse(error.ToString());
+            Assert.Equal("proposal_accept_quality_gate_failed", document.RootElement.GetProperty("errorCode").GetString());
+            Assert.True(document.RootElement.TryGetProperty("gate", out var gate));
+            Assert.Contains(
+                gate.GetProperty("failedChecks").EnumerateArray().Select(static item => item.GetString()),
+                item => string.Equals(item, "trigger.proposal_status_matches_run", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", previousWorkspace);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MetaRuns_Proposals_Accept_Json_DuplicateStepIds_FailsStructureCheck()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+        var previousWorkspace = Environment.GetEnvironmentVariable("OPENCLAW_WORKSPACE");
+
+        try
+        {
+            var workspace = Path.Combine(root, "workspace");
+            var memoryPath = Path.Combine(root, "memory");
+            Directory.CreateDirectory(workspace);
+            Environment.SetEnvironmentVariable("OPENCLAW_WORKSPACE", workspace);
+
+            await using (var store = new FileMemoryStore(memoryPath))
+            {
+                await store.SaveSessionAsync(new Session
+                {
+                    Id = "sess-governance-duplicate-step-ids",
+                    ChannelId = "cli",
+                    SenderId = "tester",
+                    MetaRunHistory =
+                    {
+                        new SessionMetaRunRecord
+                        {
+                            RunId = "run-duplicate-step-ids",
+                            SkillName = "meta-flow",
+                            Status = "failed",
+                            ErrorCode = "TOOL_ERROR",
+                            StepResults =
+                            {
+                                new SessionMetaStepResult
+                                {
+                                    Id = "draft",
+                                    Kind = "llm_chat",
+                                    Status = "completed"
+                                },
+                                new SessionMetaStepResult
+                                {
+                                    Id = "draft",
+                                    Kind = "llm_chat",
+                                    Status = "completed"
+                                }
+                            }
+                        }
+                    }
+                }, CancellationToken.None);
+            }
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync([
+                "meta-runs", "proposals", "accept", "sess-governance-duplicate-step-ids",
+                "--storage", memoryPath,
+                "--proposal", "meta-run:run-duplicate-step-ids:failed",
+                "--json"]);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, output.ToString());
+
+            using var document = JsonDocument.Parse(error.ToString());
+            Assert.Equal("proposal_accept_quality_gate_failed", document.RootElement.GetProperty("errorCode").GetString());
+            Assert.True(document.RootElement.TryGetProperty("gate", out var gate));
+            Assert.Contains(
+                gate.GetProperty("failedChecks").EnumerateArray().Select(static item => item.GetString()),
+                item => string.Equals(item, "runtime.step_id_unique", StringComparison.Ordinal));
         }
         finally
         {

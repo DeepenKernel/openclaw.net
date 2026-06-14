@@ -68,6 +68,8 @@ internal static class SkillCommands
             return await ListMetaRunsGlobalAsync(args.Skip(1).ToArray());
         if (args.Length > 0 && string.Equals(args[0], "show", StringComparison.OrdinalIgnoreCase))
             return await ShowMetaRunGlobalAsync(args.Skip(1).ToArray());
+        if (args.Length > 0 && string.Equals(args[0], "steps", StringComparison.OrdinalIgnoreCase))
+            return await ShowMetaRunStepsGlobalAsync(args.Skip(1).ToArray());
         if (args.Length > 0 && string.Equals(args[0], "failures", StringComparison.OrdinalIgnoreCase))
             return await ListMetaRunFailuresGlobalAsync(args.Skip(1).ToArray());
         if (args.Length > 0 && string.Equals(args[0], "replay", StringComparison.OrdinalIgnoreCase))
@@ -317,6 +319,19 @@ internal static class SkillCommands
     {
         var asJson = args.Contains("--json");
         var storagePath = GetOptionValue(args, "--storage");
+        var sinceRaw = GetOptionValue(args, "--since");
+        var skillName = GetOptionValue(args, "--name");
+        var limit = Math.Clamp(ParseIntOption(args, "--limit") ?? 500, 1, 2000);
+
+        if (!TryParseRelativeSinceUtc(sinceRaw, out var sinceUtc, out var sinceError))
+        {
+            WriteSkillsCommandError(
+                asJson,
+                "skills meta-runs failures",
+                "invalid_since",
+                sinceError ?? "--since must end with m/h/d, e.g. 5m, 24h, 7d.");
+            return 2;
+        }
 
         var store = OpenMemoryStore(storagePath);
         try
@@ -332,6 +347,13 @@ internal static class SkillCommands
 
                 foreach (var run in session.MetaRunHistory.Where(static item => string.Equals(item.Status, "failed", StringComparison.OrdinalIgnoreCase)))
                 {
+                    if (!string.IsNullOrWhiteSpace(skillName)
+                        && !string.Equals(run.SkillName, skillName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (sinceUtc is not null && run.CompletedAtUtc < sinceUtc.Value)
+                        continue;
+
                     failed.Add(new MetaRunGlobalItem(
                         session.Id,
                         run.RunId,
@@ -344,7 +366,7 @@ internal static class SkillCommands
                 }
             }
 
-            failed = [.. failed.OrderByDescending(static item => item.CompletedAtUtc)];
+            failed = [.. failed.OrderByDescending(static item => item.CompletedAtUtc).Take(limit)];
 
             if (asJson)
             {
@@ -357,6 +379,89 @@ internal static class SkillCommands
                 Console.WriteLine($"- {item.RunId} | session={item.SessionId} | status={item.Status} | error={item.ErrorCode ?? "none"}");
 
             return 0;
+        }
+        finally
+        {
+            switch (store)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
+    }
+
+    private static async Task<int> ShowMetaRunStepsGlobalAsync(string[] args)
+    {
+        var asJson = args.Contains("--json");
+        var storagePath = GetOptionValue(args, "--storage");
+        var runId = args.FirstOrDefault(arg => !arg.StartsWith("-", StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            WriteSkillsCommandError(
+                asJson,
+                "skills meta-runs steps",
+                "missing_run_id",
+                "Usage: openclaw skills meta-runs steps <run-id> [--storage <path>] [--json]");
+            return 2;
+        }
+
+        var store = OpenMemoryStore(storagePath);
+        try
+        {
+            var sessionIds = await LoadSessionIdsAsync(store, page: 1, pageSize: 500);
+            foreach (var sessionId in sessionIds)
+            {
+                var session = await store.GetSessionAsync(sessionId, CancellationToken.None);
+                if (session is null)
+                    continue;
+
+                var run = session.MetaRunHistory.FirstOrDefault(item => string.Equals(item.RunId, runId, StringComparison.Ordinal));
+                if (run is null)
+                    continue;
+
+                if (asJson)
+                {
+                    using var stream = new MemoryStream();
+                    using (var writer = new Utf8JsonWriter(stream))
+                    {
+                        writer.WriteStartObject();
+                        writer.WriteString("sessionId", session.Id);
+                        writer.WriteString("runId", run.RunId);
+                        writer.WriteString("skillName", run.SkillName);
+                        writer.WriteString("status", run.Status);
+                        writer.WriteNumber("stepCount", run.StepResults.Count);
+                        writer.WritePropertyName("steps");
+                        writer.WriteStartArray();
+                        foreach (var step in run.StepResults)
+                            JsonSerializer.Serialize(writer, step, CoreJsonContext.Default.SessionMetaStepResult);
+                        writer.WriteEndArray();
+                        writer.WriteEndObject();
+                    }
+
+                    Console.WriteLine(System.Text.Encoding.UTF8.GetString(stream.ToArray()));
+                }
+                else
+                {
+                    Console.WriteLine($"Run: {run.RunId}");
+                    Console.WriteLine($"Session: {session.Id}");
+                    Console.WriteLine($"Steps: {run.StepResults.Count}");
+                    Console.WriteLine($"{"STEP",-20} {"KIND",-14} {"STATUS",-12} {"DURATION",-12} FAILURE");
+                    foreach (var step in run.StepResults)
+                    {
+                        var duration = $"{step.DurationMs:0.###}ms";
+                        Console.WriteLine($"{step.Id,-20} {step.Kind,-14} {step.Status,-12} {duration,-12} {step.FailureCode ?? string.Empty}");
+                    }
+                }
+
+                return 0;
+            }
+
+            WriteSkillsCommandError(asJson, "skills meta-runs steps", "run_not_found", $"Run '{runId}' not found.");
+            return 1;
         }
         finally
         {
@@ -653,17 +758,28 @@ internal static class SkillCommands
 
             var proposal = BuildDerivedProposals(session, requestedRunId: null)
                 .FirstOrDefault(item => string.Equals(item.Id, proposalId, StringComparison.Ordinal));
+            if (proposal is null
+                && string.Equals(targetStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal)
+                && TryBuildAcceptanceProposalFromId(session, proposalId, out var fallbackProposal))
+            {
+                proposal = fallbackProposal;
+            }
+
             if (proposal is null)
             {
                 WriteSkillsCommandError(asJson, $"skills meta-runs proposals {action}", "proposal_not_found", $"Proposal '{proposalId}' not found in session '{sessionId}'.");
                 return 1;
             }
 
-            if (string.Equals(targetStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal)
-                && !PassesProposalAcceptanceQualityGate(proposal, session, out var acceptanceGateReason))
+            MetaRunProposalAcceptanceGateResult? acceptanceGate = null;
+            if (string.Equals(targetStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal))
             {
-                WriteProposalAcceptanceQualityError(asJson, $"skills meta-runs proposals {action}", acceptanceGateReason);
-                return 1;
+                acceptanceGate = MetaRunProposalAcceptanceQualityGate.Evaluate(proposal, session);
+                if (!acceptanceGate.Passed)
+                {
+                    WriteProposalAcceptanceQualityError(asJson, $"skills meta-runs proposals {action}", acceptanceGate);
+                    return 1;
+                }
             }
 
             var durableProposalId = BuildMetaRunProposalDurableId(sessionId, proposalId);
@@ -720,6 +836,8 @@ internal static class SkillCommands
                     reviewedAtUtc,
                     operatorId,
                     allowReason ? reason : null);
+                if (acceptanceGate is not null)
+                    PopulateMetaRunProposalAcceptanceGateMetadata(durableRecord.Metadata, acceptanceGate, reviewedAtUtc);
                 await learningProposalStore.SaveProposalAsync(durableRecord, CancellationToken.None);
 
                 record = new MetaRunProposalReviewRecord
@@ -1059,11 +1177,15 @@ internal static class SkillCommands
                 return 1;
             }
 
-            if (string.Equals(targetReviewStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal)
-                && !PassesProposalAcceptanceQualityGate(proposal, session, out var acceptanceGateReason))
+            MetaRunProposalAcceptanceGateResult? acceptanceGate = null;
+            if (string.Equals(targetReviewStatus, MetaRunProposalReviewStatuses.Accepted, StringComparison.Ordinal))
             {
-                WriteProposalAcceptanceQualityError(asJson, "skills meta-runs proposals change", acceptanceGateReason);
-                return 1;
+                acceptanceGate = MetaRunProposalAcceptanceQualityGate.Evaluate(proposal, session);
+                if (!acceptanceGate.Passed)
+                {
+                    WriteProposalAcceptanceQualityError(asJson, "skills meta-runs proposals change", acceptanceGate);
+                    return 1;
+                }
             }
 
             var durableProposalId = BuildMetaRunProposalDurableId(sessionId, proposalId);
@@ -1130,6 +1252,8 @@ internal static class SkillCommands
                     reviewedAtUtc,
                     operatorId,
                     reason);
+                if (acceptanceGate is not null)
+                    PopulateMetaRunProposalAcceptanceGateMetadata(durableRecord.Metadata, acceptanceGate, reviewedAtUtc);
                 await learningProposalStore.SaveProposalAsync(durableRecord, CancellationToken.None);
 
                 record = new MetaRunProposalReviewRecord
@@ -2081,6 +2205,45 @@ internal static class SkillCommands
         return int.TryParse(value, out var parsed) ? parsed : null;
     }
 
+    private static bool TryParseRelativeSinceUtc(string? value, out DateTimeOffset? sinceUtc, out string? error)
+    {
+        sinceUtc = null;
+        error = null;
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        var raw = value.Trim();
+        if (raw.Length < 2)
+        {
+            error = "--since must end with m/h/d, e.g. 5m, 24h, 7d.";
+            return false;
+        }
+
+        var unit = char.ToLowerInvariant(raw[^1]);
+        if (unit is not ('m' or 'h' or 'd'))
+        {
+            error = "--since must end with m/h/d, e.g. 5m, 24h, 7d.";
+            return false;
+        }
+
+        if (!int.TryParse(raw[..^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+        {
+            error = "--since requires a positive integer amount, e.g. 5m, 24h, 7d.";
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        sinceUtc = unit switch
+        {
+            'm' => now.AddMinutes(-amount),
+            'h' => now.AddHours(-amount),
+            'd' => now.AddDays(-amount),
+            _ => null
+        };
+
+        return sinceUtc is not null;
+    }
+
     private static IMemoryStore OpenMemoryStore(string? storagePath)
     {
         var resolved = ResolveMemoryPath(storagePath);
@@ -2225,7 +2388,8 @@ internal static class SkillCommands
               openclaw skills proposals show <session-id> --proposal <id> [--storage <path>] [--json]
                             openclaw skills meta-runs list [--page <n>] [--page-size <n>] [--storage <path>] [--json]
                             openclaw skills meta-runs show <run-id> [--storage <path>] [--json]
-                            openclaw skills meta-runs failures [--storage <path>] [--json]
+                            openclaw skills meta-runs steps <run-id> [--storage <path>] [--json]
+                            openclaw skills meta-runs failures [--since <5m|24h|7d>] [--name <skill>] [--limit <n>] [--storage <path>] [--json]
                             openclaw skills meta-runs <session-id> [--storage <path>] [--limit <count>] [--run <run-id>] [--verbose] [--json]
                             openclaw skills meta-runs replay <session-id> --run <run-id> [--storage <path>] [--json]
                             openclaw skills meta-runs reconstruct <session-id> --run <run-id> [--storage <path>] [--json]
@@ -2243,6 +2407,8 @@ internal static class SkillCommands
                             - `meta-runs --run <run-id>` limits output to one persisted run inside the session history.
                             - `meta-runs --verbose` expands per-step trace summaries for each persisted run.
                             - `meta-runs --json` emits machine-readable output for operators and scripts.
+                            - `meta-runs steps` shows persisted per-step execution details for one run id.
+                            - `meta-runs failures` supports `--since` and `--name` filters for operator triage windows.
                             - `meta-runs replay` is currently preview-only and reports whether persisted run history is sufficient for replay.
                                 - `meta-runs reconstruct` builds an audit replay result from persisted run history and optional checkpoint state without re-executing tools or models.
                                 - `meta-runs proposals` returns derived read-only proposal summaries from persisted meta-run evidence.
@@ -2348,6 +2514,67 @@ internal static class SkillCommands
                 .Where(static proposal => proposal is not null)
                 .Cast<MetaRunDerivedProposalSummary>()
         ];
+
+    private static bool TryBuildAcceptanceProposalFromId(
+        Session session,
+        string proposalId,
+        out MetaRunDerivedProposalSummary? proposal)
+    {
+        proposal = null;
+
+        if (!TryParseMetaRunProposalId(proposalId, out var runId, out var proposalStatus))
+            return false;
+
+        if (!string.Equals(proposalStatus, "paused", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(proposalStatus, "failed", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var run = session.MetaRunHistory.FirstOrDefault(item => string.Equals(item.RunId, runId, StringComparison.Ordinal));
+        if (run is null)
+            return false;
+
+        proposal = new MetaRunDerivedProposalSummary
+        {
+            Id = proposalId,
+            RunId = run.RunId,
+            SkillName = run.SkillName,
+            Status = proposalStatus!,
+            Kind = string.Equals(proposalStatus, "paused", StringComparison.OrdinalIgnoreCase)
+                ? MetaRunProposalKinds.PausedRunFollowup
+                : MetaRunProposalKinds.FailedRunReview,
+            Title = string.Equals(proposalStatus, "paused", StringComparison.OrdinalIgnoreCase)
+                ? $"Resume paused meta run {run.SkillName}"
+                : $"Review failed meta run {run.SkillName}",
+            Summary = string.Equals(proposalStatus, "paused", StringComparison.OrdinalIgnoreCase)
+                ? $"Run {run.RunId} is paused and needs operator follow-up."
+                : $"Run {run.RunId} failed and needs review.",
+            AvailableActions = [MetaRunProposalActions.Show, MetaRunProposalActions.Accept, MetaRunProposalActions.Dismiss]
+        };
+
+        return true;
+    }
+
+    private static bool TryParseMetaRunProposalId(
+        string proposalId,
+        out string? runId,
+        out string? status)
+    {
+        runId = null;
+        status = null;
+
+        const string prefix = "meta-run:";
+        if (!proposalId.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        var payload = proposalId[prefix.Length..];
+        var separatorIndex = payload.LastIndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex == payload.Length - 1)
+            return false;
+
+        runId = payload[..separatorIndex];
+        status = payload[(separatorIndex + 1)..];
+        return !string.IsNullOrWhiteSpace(runId) && !string.IsNullOrWhiteSpace(status);
+    }
 
     private static MetaRunDerivedProposalSummary? TryBuildDerivedProposalSummary(
         SessionMetaRunRecord run,
@@ -2753,6 +2980,19 @@ internal static class SkillCommands
     private static string BuildMetaRunProposalDurableId(string sessionId, string proposalId)
         => $"meta-run-proposal:{sessionId}:{proposalId}";
 
+    private static void PopulateMetaRunProposalAcceptanceGateMetadata(
+        IDictionary<string, string> metadata,
+        MetaRunProposalAcceptanceGateResult gate,
+        DateTimeOffset checkedAtUtc)
+    {
+        metadata[MetaRunProposalMetadata.AcceptGateProfile] = gate.ProfileId;
+        metadata[MetaRunProposalMetadata.AcceptGatePassed] = gate.Passed ? "true" : "false";
+        metadata[MetaRunProposalMetadata.AcceptGateFailedChecks] = gate.FailedChecks.Count == 0
+            ? string.Empty
+            : string.Join(",", gate.FailedChecks);
+        metadata[MetaRunProposalMetadata.AcceptGateCheckedAtUtc] = checkedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+    }
+
     private static bool TryGetMetaRunProposalMetadata(LearningProposal proposal, string key, out string value)
     {
         if (proposal.Metadata.TryGetValue(key, out var metadataValue) && !string.IsNullOrWhiteSpace(metadataValue))
@@ -2786,44 +3026,40 @@ internal static class SkillCommands
         return false;
     }
 
-    private static bool PassesProposalAcceptanceQualityGate(
-        MetaRunDerivedProposalSummary proposal,
-        Session session,
-        out string reason)
+    private static void WriteProposalAcceptanceQualityError(bool asJson, string command, MetaRunProposalAcceptanceGateResult gate)
     {
-        var run = session.MetaRunHistory.FirstOrDefault(item => string.Equals(item.RunId, proposal.RunId, StringComparison.Ordinal));
-        if (run is null)
+        var failedChecks = gate.FailedChecks;
+        var reason = failedChecks.Count == 0 ? string.Empty : string.Join(",", failedChecks);
+        var message = string.IsNullOrWhiteSpace(reason)
+            ? "Proposal acceptance quality gate failed."
+            : $"Proposal acceptance quality gate failed. Reason: {reason}.";
+
+        if (!asJson)
         {
-            reason = "run_not_found";
-            return false;
+            WriteSkillsCommandError(false, command, "proposal_accept_quality_gate_failed", message);
+            return;
         }
 
-        if (!string.Equals(run.Status, "failed", StringComparison.OrdinalIgnoreCase))
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
         {
-            reason = string.Empty;
-            return true;
+            writer.WriteStartObject();
+            writer.WriteString("status", "error");
+            writer.WriteString("command", command);
+            writer.WriteString("errorCode", "proposal_accept_quality_gate_failed");
+            writer.WriteString("message", message);
+            writer.WriteStartObject("gate");
+            writer.WriteString("profileId", gate.ProfileId);
+            writer.WriteBoolean("passed", gate.Passed);
+            writer.WriteStartArray("failedChecks");
+            foreach (var failed in failedChecks)
+                writer.WriteStringValue(failed);
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
         }
 
-        var hasFailureEvidence = !string.IsNullOrWhiteSpace(run.ErrorCode)
-            || !string.IsNullOrWhiteSpace(run.Error)
-            || run.StepResults.Any(static step => !string.IsNullOrWhiteSpace(step.FailureCode));
-        if (!hasFailureEvidence)
-        {
-            reason = "failed_run_missing_evidence";
-            return false;
-        }
-
-        reason = string.Empty;
-        return true;
-    }
-
-    private static void WriteProposalAcceptanceQualityError(bool asJson, string command, string reason)
-    {
-        var message = "Proposal acceptance quality gate failed.";
-        if (!string.IsNullOrWhiteSpace(reason))
-            message = $"{message} Reason: {reason}.";
-
-        WriteSkillsCommandError(asJson, command, "proposal_accept_quality_gate_failed", message);
+        Console.Error.WriteLine(System.Text.Encoding.UTF8.GetString(stream.ToArray()));
     }
 
     private static Dictionary<string, string> BuildMetaRunProposalMetadata(
@@ -2962,6 +3198,10 @@ internal static class SkillCommands
         public const string LastTransitionAction = "meta_run_proposal_last_transition_action";
         public const string LastTransitionChangedAtUtc = "meta_run_proposal_last_transition_changed_at_utc";
         public const string LastTransitionActorId = "meta_run_proposal_last_transition_actor_id";
+        public const string AcceptGateProfile = "meta_run_proposal_accept_gate_profile";
+        public const string AcceptGatePassed = "meta_run_proposal_accept_gate_passed";
+        public const string AcceptGateFailedChecks = "meta_run_proposal_accept_gate_failed_checks";
+        public const string AcceptGateCheckedAtUtc = "meta_run_proposal_accept_gate_checked_at_utc";
     }
 
     private static void WriteDerivedProposalListText(MetaRunDerivedProposalListResponse response)

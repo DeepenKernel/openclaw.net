@@ -113,6 +113,110 @@ public sealed class SkillCommandsGlobalMetaRunsTests
         }
     }
 
+    [Fact]
+    public async Task RunAsync_MetaRuns_Steps_Json_PrintsStepTraceForRequestedRun()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+
+        try
+        {
+            var memoryPath = Path.Combine(root, "memory");
+            await SeedSessionsAsync(memoryPath);
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync(["meta-runs", "steps", "run-failed-001", "--storage", memoryPath, "--json"]);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Equal("run-failed-001", document.RootElement.GetProperty("runId").GetString());
+            Assert.Equal("sess-global-b", document.RootElement.GetProperty("sessionId").GetString());
+            var steps = document.RootElement.GetProperty("steps");
+            Assert.Equal(1, steps.GetArrayLength());
+            Assert.Equal("draft", steps[0].GetProperty("id").GetString());
+            Assert.Equal("failed", steps[0].GetProperty("status").GetString());
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MetaRuns_Failures_NameFilter_ReturnsEmptySetWhenNoMatch()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+
+        try
+        {
+            var memoryPath = Path.Combine(root, "memory");
+            await SeedSessionsAsync(memoryPath);
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync(["meta-runs", "failures", "--name", "meta-flow-a", "--storage", memoryPath, "--json"]);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, error.ToString());
+
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Equal(0, document.RootElement.GetProperty("count").GetInt32());
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MetaRuns_Failures_InvalidSince_ReturnsUsageError()
+    {
+        var root = CreateTempRoot();
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+
+        try
+        {
+            var memoryPath = Path.Combine(root, "memory");
+            await SeedSessionsAsync(memoryPath);
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Console.SetOut(output);
+            Console.SetError(error);
+
+            var exitCode = await SkillCommands.RunAsync(["meta-runs", "failures", "--since", "bad", "--storage", memoryPath, "--json"]);
+
+            Assert.Equal(2, exitCode);
+            Assert.Equal(string.Empty, output.ToString());
+
+            using var document = JsonDocument.Parse(error.ToString());
+            Assert.Equal("invalid_since", document.RootElement.GetProperty("errorCode").GetString());
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static async Task SeedSessionsAsync(string memoryPath)
     {
         await using var store = new FileMemoryStore(memoryPath);

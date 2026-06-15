@@ -20,10 +20,10 @@
 | MetaSkill 基本定义 | `SKILL.md` 里要有 `kind: meta`、`triggers`、`composition.steps` | 已支持 | [SkillLoader.cs](../../src/OpenClaw.Core/Skills/SkillLoader.cs#L261)；[SkillModels.cs](../../src/OpenClaw.Core/Skills/SkillModels.cs#L100) | 已完成 |
 | 自然触发 / 显式触发 | 支持自然语言触发和显式指定 meta skill | 已支持 `triggers` + `meta_invoke` + 优先级匹配 | [MetaSkillResolver.cs](../../src/OpenClaw.Core/Skills/MetaSkillResolver.cs#L1)；[MetaInvokeTool.cs](../../src/OpenClaw.Core/Skills/MetaInvokeTool.cs#L1) | 已完成 |
 | 前置限制（运行时与测试） | 作者/用户指南强调要做结构校验、触发检查、运行时测试、安全边界评估 | 结构/触发解析与运行时测试覆盖已具备，核心执行链路可验证 | OpenSquilla 用户/作者文档；[SkillLoader.cs](../../src/OpenClaw.Core/Skills/SkillLoader.cs#L261)；[MetaSkillResolver.cs](../../src/OpenClaw.Core/Skills/MetaSkillResolver.cs#L1)；[SkillTests.cs](../../src/OpenClaw.Tests/SkillTests.cs#L240) | 已完成 |
-| 审核流程对象（治理层） | 对高风险 meta 变更应有独立审核流程与可追踪治理对象 | 已落地独立 durable review-workflow object，与 proposal lifecycle 状态独立持久化，并通过 additive `workflow` 字段输出供审计 | OpenSquilla 用户/作者文档；[LearningModels.cs](../../src/OpenClaw.Core/Models/LearningModels.cs#L23)；[SkillCommands.cs](../../src/OpenClaw.Cli/SkillCommands.cs#L3070)；[SkillCommands.cs](../../src/OpenClaw.Cli/SkillCommands.cs#L3073)；[SkillCommands.cs](../../src/OpenClaw.Cli/SkillCommands.cs#L2829)；[Session.cs](../../src/OpenClaw.Core/Models/Session.cs#L595)；[SkillCommandsTests.cs](../../src/OpenClaw.Tests/SkillCommandsTests.cs#L4884)；[SkillCommandsTests.cs](../../src/OpenClaw.Tests/SkillCommandsTests.cs#L4980) | 已完成 |
+| 审核流程对象（治理层） | 文档强调 review / audit 可追踪，但未强制规定必须采用“独立 durable workflow 对象”这一实现形态 | OpenClaw 已实现独立 durable review-workflow object，与 proposal lifecycle 状态独立持久化，并通过 additive `workflow` 字段输出供审计（属于治理增强实现） | OpenSquilla 用户/作者文档；[LearningModels.cs](../../src/OpenClaw.Core/Models/LearningModels.cs#L23)；[SkillCommands.cs](../../src/OpenClaw.Cli/SkillCommands.cs#L3070)；[SkillCommands.cs](../../src/OpenClaw.Cli/SkillCommands.cs#L3073)；[SkillCommands.cs](../../src/OpenClaw.Cli/SkillCommands.cs#L2829)；[Session.cs](../../src/OpenClaw.Core/Models/Session.cs#L595)；[SkillCommandsTests.cs](../../src/OpenClaw.Tests/SkillCommandsTests.cs#L4884)；[SkillCommandsTests.cs](../../src/OpenClaw.Tests/SkillCommandsTests.cs#L4980) | 已完成 |
 | 风险元数据 | `metadata.opensquilla.risk` / `capabilities` 要成为作者约束的一部分 | Meta skill 加载已按配置执行 risk/capability 门禁 | [SkillLoader.cs](../../src/OpenClaw.Core/Skills/SkillLoader.cs#L2218)；[SkillTests.cs](../../src/OpenClaw.Tests/SkillTests.cs#L1185) | 已完成 |
 | 是否允许再 compose MetaSkill | 作者文档明确说 MetaSkill 不能 compose 另一个 MetaSkill | 运行时预检会拒绝 meta->meta composition | [AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L1988)；[MafAgentRuntime.cs](../../src/OpenClaw.MicrosoftAgentFrameworkAdapter/MafAgentRuntime.cs#L721)；[AgentRuntimeTests.cs](../../src/OpenClaw.Tests/AgentRuntimeTests.cs#L1590) | 已完成 |
-| Final text mode | `auto` / `raw` / `structured` / `step:<id>` | 已支持 | [AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L3035)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L3047) | 已完成 |
+| Final text mode | OpenSquilla 基线为 `auto` / `raw` / `step:<id>` | OpenClaw 已覆盖上述基线，并额外支持 `structured`（扩展能力） | [AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L3035)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L3047) | 已完成 |
 | DAG / depends_on / route / on_failure | 组合步骤、依赖、路由、失败替代都要可执行 | 已支持 | [SkillModels.cs](../../src/OpenClaw.Core/Skills/SkillModels.cs#L151)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L2888)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L3549) | 已完成 |
 | Step 类型覆盖 | `agent`、`llm_chat`、`llm_classify`、`user_input`、`tool_call`、`skill_exec` | 已支持 | OpenSquilla authoring 文档；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L2257)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L2584)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L2696)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L3433) | 已完成 |
 | user_input / clarify 语义 | 文档里有 form/chat、fields、skip_if、timeout、cancel 等更完整语义 | form/chat、fields、timeout、cancel、默认值、类型校验与 `skip_if` 都已支持 | [SkillLoader.cs](../../src/OpenClaw.Core/Skills/SkillLoader.cs#L1477)；[AgentRuntime.cs](../../src/OpenClaw.Agent/AgentRuntime.cs#L2696)；[MafAdapterTests.cs](../../src/OpenClaw.Tests/MafAdapterTests.cs#L1707) | 已完成 |
@@ -36,6 +36,7 @@
 
 ### 严格版迁移结论
 
+- **口径说明（上游要求 vs 本地增强）**：本表中的“已完成”表示已满足 OpenSquilla 文档的能力目标；若上游未强制实现形态（例如是否采用独立 durable workflow 对象、是否提供 `structured` final text mode），则按 OpenClaw 的增强实现计入，不将其表述为上游硬规范。
 - **运行时主链路已完成迁移**：DAG、路由、失败替代、pause/resume、`skill_exec`、risk/capabilities 门禁与审计证据主路径均可用。
 - **运维/产品命令面已完成当前同构目标**：在保留 session 维度 `meta-runs` 入口的前提下，已补齐全局 runs 视图命令（`list/show/steps/failures`）与稳定 meta catalog 产品入口，并支持失败窗口过滤。
 - **治理门禁已完成 profile 对齐**：proposal 接受前统一质量门禁已在 `accept/change --to accept` 落地 `opensquilla-authoring-v1` 结构化 profile，覆盖 `structure/trigger/runtime/safety` 分组检查，且 machine-readable 失败契约已携带 gate profile 与失败检查列表。
@@ -219,6 +220,17 @@ DoD：
   优先建议：按 failure matrix 维度补齐更多组合链路，并保持 JSON 错误契约 + non-drift 双断言。
 2. 如未来需要更细 creator 分类，再拆分阻断项/警告项门禁策略。
 3. 将扩展后的产品级 E2E 切片纳入常规回归基线。
+
+## 2026-06-15 增量闭环：`meta-skill-creator` 运行时同构
+
+- Gateway 内置 `meta-skill-creator` 已具备 `fill_slots/assemble/lint/smoke/runtime_e2e/persist` 语义实现与可执行链路。
+- FULL_GATED 等价测试已在 Agent 与 MAF 两侧显式断言 `lint`/`smoke`/`runtime_e2e`/`persist` 均完成。
+- creator 工具契约测试已覆盖持久化 `gates.json` 结构（`proposal_id`、`creator_mode`、`lint`、`smoke`、`runtime_e2e`）与响应 envelope。
+
+验证切片：
+
+- `dotnet test src/OpenClaw.Tests/OpenClaw.Tests.csproj --filter "FullyQualifiedName~MafAgentRuntime_ExecuteMetaSkillAsync_MetaSkillCreator_FullGated_Completes|FullyQualifiedName~ExecuteMetaSkillAsync_MetaSkillCreator_FullGated_ProducesPersistencePayload"`
+- `dotnet test src/OpenClaw.Tests/OpenClaw.Tests.csproj --filter "FullyQualifiedName~MetaSkillCreator"`
 
 ## Phase 3 验收清单（DoD 草案）
 

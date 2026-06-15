@@ -2439,6 +2439,46 @@ public class AgentRuntimeTests
     }
 
     [Fact]
+    public async Task ExecuteMetaSkillAsync_MetaSkillCreator_PreviewOnly_Completes()
+    {
+        var agent = new AgentRuntime(
+            _chatClient,
+            BuildCreatorToolSetForTests(),
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            skills: [CreateMetaSkillCreatorTestDefinition(fullGated: false)]);
+        var session = new Session { Id = "meta-creator-preview", SenderId = "u", ChannelId = "c" };
+
+        var result = await InvokeMetaSkillAsync(agent, session, "meta-skill-creator", "create a meta-skill preview only", CancellationToken.None);
+
+        Assert.Contains("proposal preview ready", result, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("not found", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteMetaSkillAsync_MetaSkillCreator_FullGated_ProducesPersistencePayload()
+    {
+        var agent = new AgentRuntime(
+            _chatClient,
+            BuildCreatorToolSetForTests(),
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            skills: [CreateMetaSkillCreatorTestDefinition(fullGated: true)]);
+        var session = new Session { Id = "meta-creator-full", SenderId = "u", ChannelId = "c" };
+
+        var result = await InvokeMetaSkillAsync(agent, session, "meta-skill-creator", "create production-ready fully gated meta-skill", CancellationToken.None);
+
+        Assert.Contains("proposal preview ready", result, StringComparison.OrdinalIgnoreCase);
+        var run = Assert.Single(session.MetaRunHistory);
+        Assert.Contains(run.StepResults, step => string.Equals(step.Id, "lint", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+        Assert.Contains(run.StepResults, step => string.Equals(step.Id, "smoke", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+        Assert.Contains(run.StepResults, step => string.Equals(step.Id, "persist", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+        Assert.Contains(run.StepResults, step => string.Equals(step.Id, "runtime_e2e", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ExecuteMetaSkillAsync_SkillExecStep_RunsScriptResourceEntrypoint()
     {
         var skillRoot = Path.Combine(Path.GetTempPath(), "openclaw-meta-skill-exec", Guid.NewGuid().ToString("N"));
@@ -2591,6 +2631,101 @@ public class AgentRuntimeTests
         {
             Directory.Delete(skillRoot, recursive: true);
         }
+    }
+
+    private static List<ITool> BuildCreatorToolSetForTests() =>
+    [
+        new EmitTextTool(),
+        new MetaSkillFillSlotsTool(),
+        new MetaSkillAssembleTool(),
+        new MetaSkillLintRunTool(),
+        new MetaSkillSmokeRunTool(),
+        new MetaSkillRuntimeE2ERunTool(),
+        new MetaSkillPersistProposalTool()
+    ];
+
+    private static SkillDefinition CreateMetaSkillCreatorTestDefinition(bool fullGated)
+    {
+        var persistHome = Path.Combine(Path.GetTempPath(), "openclaw-meta-creator-tests", Guid.NewGuid().ToString("N"));
+        var persistHomeJson = persistHome.Replace("\\", "\\\\", StringComparison.Ordinal);
+
+        var steps = new List<MetaSkillStepDefinition>
+        {
+            new()
+            {
+                Id = "fill_slots",
+                Kind = "tool_call",
+                Tool = "meta_skill_fill_slots",
+                ToolArgsJson = "{\"pattern_id\":\"p1_sequential\",\"history_summary\":\"recent usage\",\"user_intent\":\"create a meta-skill\"}"
+            },
+            new()
+            {
+                Id = "assemble",
+                Kind = "tool_call",
+                Tool = "meta_skill_assemble",
+                ToolArgsJson = "{\"pattern_id\":\"p1_sequential\",\"slots_json\":\"{\\\"name\\\":\\\"meta-demo\\\",\\\"description\\\":\\\"Generated meta workflow for deterministic creator parity.\\\",\\\"meta_priority\\\":50,\\\"triggers\\\":[\\\"create a meta-skill\\\"],\\\"steps\\\":[{\\\"id\\\":\\\"gather\\\",\\\"skill\\\":\\\"history-explorer\\\",\\\"task\\\":\\\"Collect context\\\",\\\"with_keys\\\":{}},{\\\"id\\\":\\\"synthesize\\\",\\\"skill\\\":\\\"summarize\\\",\\\"task\\\":\\\"Build answer\\\",\\\"with_keys\\\":{}}]}\"}",
+                DependsOn = ["fill_slots"]
+            },
+            new()
+            {
+                Id = "lint",
+                Kind = "tool_call",
+                Tool = "meta_skill_lint_run",
+                ToolArgsJson = "{\"skill_md\":\"---\\nname: \\\"meta-demo\\\"\\ndescription: \\\"Generated creator lint fixture with valid composition.\\\"\\nkind: meta\\ncomposition:\\n  steps:\\n    - id: gather\\n      skill: \\\"history-explorer\\\"\\n      with:\\n        task: \\\"Collect context\\\"\\n---\\nbody\\n\"}",
+                DependsOn = ["assemble"]
+            }
+        };
+
+        if (fullGated)
+        {
+            steps.Add(new MetaSkillStepDefinition
+            {
+                Id = "smoke",
+                Kind = "tool_call",
+                Tool = "meta_skill_smoke_run",
+                ToolArgsJson = "{\"skill_md\":\"---\\nname: \\\"meta-demo\\\"\\ndescription: \\\"Generated creator smoke fixture with trigger.\\\"\\nkind: meta\\ntriggers:\\n  - \\\"create a meta-skill\\\"\\ncomposition:\\n  steps:\\n    - id: gather\\n      skill: \\\"history-explorer\\\"\\n      with:\\n        task: \\\"Collect context\\\"\\n---\\nbody\\n\"}",
+                DependsOn = ["lint"]
+            });
+            steps.Add(new MetaSkillStepDefinition
+            {
+                Id = "runtime_e2e",
+                Kind = "tool_call",
+                Tool = "meta_skill_runtime_e2e_run",
+                ToolArgsJson = "{\"skill_md\":\"---\\nname: meta-demo\\nkind: meta\\n---\\n\"}",
+                DependsOn = ["smoke"]
+            });
+            steps.Add(new MetaSkillStepDefinition
+            {
+                Id = "persist",
+                Kind = "tool_call",
+                Tool = "meta_skill_persist_proposal",
+                ToolArgsJson = $"{{\"skill_md\":\"---\\nname: meta-demo\\nkind: meta\\n---\\n\",\"lint_result\":\"{{}}\",\"smoke_result\":\"{{}}\",\"home\":\"{persistHomeJson}\"}}",
+                DependsOn = ["runtime_e2e"]
+            });
+        }
+
+        steps.Add(new MetaSkillStepDefinition
+        {
+            Id = "preview",
+            Kind = "tool_call",
+            Tool = "emit_text",
+            ToolArgsJson = "{\"text\":\"proposal preview ready\"}",
+            DependsOn = fullGated ? ["persist"] : ["lint"]
+        });
+
+        return new SkillDefinition
+        {
+            Name = "meta-skill-creator",
+            Description = "meta skill creator dependency parity test definition",
+            Instructions = "...",
+            Location = "/skills/meta-skill-creator",
+            Kind = SkillKind.Meta,
+            FinalTextMode = "step:preview",
+            Composition = new MetaSkillComposition
+            {
+                Steps = steps
+            }
+        };
     }
 
     private static async Task<string> InvokeMetaSkillAsync(

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using OpenClaw.Agent;
+using OpenClaw.Agent.Tools;
 using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Memory;
@@ -2258,6 +2259,64 @@ public sealed class MafAdapterTests
     }
 
     [Fact]
+    public async Task MafAgentRuntime_ExecuteMetaSkillAsync_MetaSkillCreator_PreviewOnly_Completes()
+    {
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-meta-creator-preview-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                new TestLlmExecutionService(),
+                new MafOptions(),
+                tools: BuildCreatorToolSetForMafTests(),
+                skills: [CreateMetaSkillCreatorTestDefinition(fullGated: false)]);
+            var session = CreateSession("maf-meta-creator-preview");
+
+            var result = await InvokeMafMetaSkillAsync(runtime, session, "meta-skill-creator", "create a meta-skill preview", CancellationToken.None);
+
+            Assert.Contains("proposal preview ready", result, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("not found", result, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_ExecuteMetaSkillAsync_MetaSkillCreator_FullGated_Completes()
+    {
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-meta-creator-full-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                new TestLlmExecutionService(),
+                new MafOptions(),
+                tools: BuildCreatorToolSetForMafTests(),
+                skills: [CreateMetaSkillCreatorTestDefinition(fullGated: true)]);
+            var session = CreateSession("maf-meta-creator-full");
+
+            var result = await InvokeMafMetaSkillAsync(runtime, session, "meta-skill-creator", "create production-ready fully gated meta-skill", CancellationToken.None);
+
+            Assert.Contains("proposal preview ready", result, StringComparison.OrdinalIgnoreCase);
+            var run = Assert.Single(session.MetaRunHistory);
+            Assert.Contains(run.StepResults, step => string.Equals(step.Id, "lint", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+            Assert.Contains(run.StepResults, step => string.Equals(step.Id, "smoke", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+            Assert.Contains(run.StepResults, step => string.Equals(step.Id, "persist", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+            Assert.Contains(run.StepResults, step => string.Equals(step.Id, "runtime_e2e", StringComparison.Ordinal) && string.Equals(step.Status, "completed", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MafAgentRuntime_ExecuteMetaSkillAsync_ToolStepFailure_StopsWhenContinueOnErrorIsFalse()
     {
         var storagePath = Path.Join(Path.GetTempPath(), "openclaw-maf-meta-tool-failure-tests", Guid.NewGuid().ToString("N"));
@@ -3646,6 +3705,101 @@ public sealed class MafAdapterTests
         return session;
     }
 
+    private static List<ITool> BuildCreatorToolSetForMafTests() =>
+    [
+        new EmitTextTool(),
+        new MetaSkillFillSlotsTool(),
+        new MetaSkillAssembleTool(),
+        new MetaSkillLintRunTool(),
+        new MetaSkillSmokeRunTool(),
+        new MetaSkillRuntimeE2ERunTool(),
+        new MetaSkillPersistProposalTool()
+    ];
+
+    private static SkillDefinition CreateMetaSkillCreatorTestDefinition(bool fullGated)
+    {
+        var persistHome = Path.Combine(Path.GetTempPath(), "openclaw-meta-creator-tests", Guid.NewGuid().ToString("N"));
+        var persistHomeJson = persistHome.Replace("\\", "\\\\", StringComparison.Ordinal);
+
+        var steps = new List<MetaSkillStepDefinition>
+        {
+            new()
+            {
+                Id = "fill_slots",
+                Kind = "tool_call",
+                Tool = "meta_skill_fill_slots",
+                ToolArgsJson = "{\"pattern_id\":\"p1_sequential\",\"history_summary\":\"recent usage\",\"user_intent\":\"create a meta-skill\"}"
+            },
+            new()
+            {
+                Id = "assemble",
+                Kind = "tool_call",
+                Tool = "meta_skill_assemble",
+                ToolArgsJson = "{\"pattern_id\":\"p1_sequential\",\"slots_json\":\"{\\\"name\\\":\\\"meta-demo\\\",\\\"description\\\":\\\"Generated meta workflow for deterministic creator parity.\\\",\\\"meta_priority\\\":50,\\\"triggers\\\":[\\\"create a meta-skill\\\"],\\\"steps\\\":[{\\\"id\\\":\\\"gather\\\",\\\"skill\\\":\\\"history-explorer\\\",\\\"task\\\":\\\"Collect context\\\",\\\"with_keys\\\":{}},{\\\"id\\\":\\\"synthesize\\\",\\\"skill\\\":\\\"summarize\\\",\\\"task\\\":\\\"Build answer\\\",\\\"with_keys\\\":{}}]}\"}",
+                DependsOn = ["fill_slots"]
+            },
+            new()
+            {
+                Id = "lint",
+                Kind = "tool_call",
+                Tool = "meta_skill_lint_run",
+                ToolArgsJson = "{\"skill_md\":\"---\\nname: \\\"meta-demo\\\"\\ndescription: \\\"Generated creator lint fixture with valid composition.\\\"\\nkind: meta\\ncomposition:\\n  steps:\\n    - id: gather\\n      skill: \\\"history-explorer\\\"\\n      with:\\n        task: \\\"Collect context\\\"\\n---\\nbody\\n\"}",
+                DependsOn = ["assemble"]
+            }
+        };
+
+        if (fullGated)
+        {
+            steps.Add(new MetaSkillStepDefinition
+            {
+                Id = "smoke",
+                Kind = "tool_call",
+                Tool = "meta_skill_smoke_run",
+                ToolArgsJson = "{\"skill_md\":\"---\\nname: \\\"meta-demo\\\"\\ndescription: \\\"Generated creator smoke fixture with trigger.\\\"\\nkind: meta\\ntriggers:\\n  - \\\"create a meta-skill\\\"\\ncomposition:\\n  steps:\\n    - id: gather\\n      skill: \\\"history-explorer\\\"\\n      with:\\n        task: \\\"Collect context\\\"\\n---\\nbody\\n\"}",
+                DependsOn = ["lint"]
+            });
+            steps.Add(new MetaSkillStepDefinition
+            {
+                Id = "runtime_e2e",
+                Kind = "tool_call",
+                Tool = "meta_skill_runtime_e2e_run",
+                ToolArgsJson = "{\"skill_md\":\"---\\nname: meta-demo\\nkind: meta\\n---\\n\"}",
+                DependsOn = ["smoke"]
+            });
+            steps.Add(new MetaSkillStepDefinition
+            {
+                Id = "persist",
+                Kind = "tool_call",
+                Tool = "meta_skill_persist_proposal",
+                ToolArgsJson = $"{{\"skill_md\":\"---\\nname: meta-demo\\nkind: meta\\n---\\n\",\"lint_result\":\"{{}}\",\"smoke_result\":\"{{}}\",\"home\":\"{persistHomeJson}\"}}",
+                DependsOn = ["runtime_e2e"]
+            });
+        }
+
+        steps.Add(new MetaSkillStepDefinition
+        {
+            Id = "preview",
+            Kind = "tool_call",
+            Tool = "emit_text",
+            ToolArgsJson = "{\"text\":\"proposal preview ready\"}",
+            DependsOn = fullGated ? ["persist"] : ["lint"]
+        });
+
+        return new SkillDefinition
+        {
+            Name = "meta-skill-creator",
+            Description = "meta skill creator dependency parity test definition",
+            Instructions = "...",
+            Location = "/skills/meta-skill-creator",
+            Kind = SkillKind.Meta,
+            FinalTextMode = "step:preview",
+            Composition = new MetaSkillComposition
+            {
+                Steps = steps
+            }
+        };
+    }
+
     private static async Task<AgentSession> CreatePopulatedAgentSessionAsync(ChatClientAgent agent)
     {
         var agentSession = await agent.CreateSessionAsync(CancellationToken.None);
@@ -3871,6 +4025,60 @@ public sealed class MafAdapterTests
                 ProviderId = "test-maf",
                 ModelId = "maf-test-model",
                 Response = new ChatResponse([new ChatMessage(ChatRole.Assistant, "ok")])
+            });
+        }
+
+        public Task<LlmStreamingExecutionResult> StartStreamingAsync(
+            Session session,
+            IReadOnlyList<ChatMessage> messages,
+            ChatOptions options,
+            TurnContext turnContext,
+            LlmExecutionEstimate estimate,
+            CancellationToken ct)
+        {
+            _ = session;
+            _ = messages;
+            _ = options;
+            _ = turnContext;
+            _ = estimate;
+            _ = ct;
+            return Task.FromResult(new LlmStreamingExecutionResult
+            {
+                ProviderId = "test-maf",
+                ModelId = "maf-test-model",
+                Updates = AsyncEnumerable.Empty<ChatResponseUpdate>()
+            });
+        }
+    }
+
+    private sealed class SequencedLlmExecutionService(params string[] responses) : ILlmExecutionService
+    {
+        private int _responseIndex;
+
+        public CircuitState DefaultCircuitState => CircuitState.Closed;
+
+        public Task<LlmExecutionResult> GetResponseAsync(
+            Session session,
+            IReadOnlyList<ChatMessage> messages,
+            ChatOptions options,
+            TurnContext turnContext,
+            LlmExecutionEstimate estimate,
+            CancellationToken ct)
+        {
+            _ = session;
+            _ = messages;
+            _ = options;
+            _ = turnContext;
+            _ = estimate;
+            _ = ct;
+
+            var index = Interlocked.Increment(ref _responseIndex) - 1;
+            var response = index < responses.Length ? responses[index] : responses[^1];
+            return Task.FromResult(new LlmExecutionResult
+            {
+                ProviderId = "test-maf",
+                ModelId = "maf-test-model",
+                Response = new ChatResponse([new ChatMessage(ChatRole.Assistant, response)])
             });
         }
 

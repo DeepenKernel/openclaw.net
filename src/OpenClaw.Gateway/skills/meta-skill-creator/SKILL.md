@@ -15,8 +15,8 @@ triggers:
   - "synthesize meta-skill"
   - "compose meta-skill"
 provenance:
-  origin: opensquilla-original
-  license: Apache-2.0
+  origin: openclaw.net
+  license: MIT
 composition:
   steps:
     - id: clarify_intent

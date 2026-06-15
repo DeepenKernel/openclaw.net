@@ -2,9 +2,10 @@
 name: history-explorer
 description: "Query meta-run history style logs and return JSON summaries for co-occurrence, meta usage, and router fixture context."
 provenance:
-  origin: opensquilla-original
-  license: Apache-2.0
+  origin: openclaw.net
+  license: MIT    
 metadata:
+  
   requires:
     anyBins: ["python", "python3"]
 entrypoint:

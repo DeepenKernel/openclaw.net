@@ -31,6 +31,13 @@ OpenClaw.NET Gateway ships with a focused set of meta-skill templates:
 | `meta-skill-creator` | Turns repeated multi-skill collaboration patterns into new MetaSkill proposals. Supports 3 DAG patterns: `p1_sequential`, `p2_fan_out_merge`, `p3_condition_gated`. |
 | `history-explorer` | Inspects and surfaces recent session history for downstream steps. |
 
+Bundled standard skills include:
+
+| Skill | Purpose |
+| --- | --- |
+| `summarize` | Produces structured summaries with key points, details, and action items. |
+| `daily-news-digest` | Produces daily news briefs with links, takeaways, and watch items. |
+
 Additional domain-specific meta-skills can be installed via `openclaw skills
 install` or placed in plugin skill directories.
 

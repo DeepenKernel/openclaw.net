@@ -26,6 +26,13 @@ OpenClaw.NET Gateway 内置了精选的 MetaSkill 模板：
 | `meta-skill-creator` | 将重复的多 Skill 协作模式转化为新 MetaSkill 提案。支持 3 种 DAG 模式：`p1_sequential`、`p2_fan_out_merge`、`p3_condition_gated` |
 | `history-explorer` | 检查并输出最近会话历史供下游步骤使用 |
 
+内置标准 Skill：
+
+| Skill | 用途 |
+| --- | --- |
+| `summarize` | 生成结构化摘要，包含关键要点、详细说明和行动项 |
+| `daily-news-digest` | 生成每日新闻简报，包含链接、要点和关注事项 |
+
 可通过 `openclaw skills install` 或插件 Skill 目录安装额外的领域专用 MetaSkill。
 
 ## 核心能力

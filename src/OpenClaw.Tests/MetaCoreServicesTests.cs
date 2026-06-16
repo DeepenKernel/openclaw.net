@@ -86,6 +86,290 @@ public sealed class MetaCoreServicesTests
         Assert.True(evaluator.Evaluate("{% if outputs.classify == 'bug' %}true{% endif %}", context));
     }
 
+    // ── Compound condition evaluation (and / or / not) ──
+
+    [Fact]
+    public void MetaConditionEvaluator_AndBothTrue_ReturnsTrue()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "bug",
+                ["priority"] = "high"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.True(evaluator.Evaluate("outputs.classify == 'bug' and outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_AndOneFalse_ReturnsFalse()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "bug",
+                ["priority"] = "low"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.False(evaluator.Evaluate("outputs.classify == 'bug' and outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_AndBothFalse_ReturnsFalse()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "doc",
+                ["priority"] = "low"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.False(evaluator.Evaluate("outputs.classify == 'bug' and outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_OrBothFalse_ReturnsFalse()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "doc",
+                ["priority"] = "low"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.False(evaluator.Evaluate("outputs.classify == 'bug' or outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_OrFirstTrue_ReturnsTrue()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "bug",
+                ["priority"] = "low"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.True(evaluator.Evaluate("outputs.classify == 'bug' or outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_OrSecondTrue_ReturnsTrue()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "doc",
+                ["priority"] = "high"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.True(evaluator.Evaluate("outputs.classify == 'bug' or outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_ThreeWayAnd_AllTrue()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["a"] = "1",
+                ["b"] = "2",
+                ["c"] = "3"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.True(evaluator.Evaluate("outputs.a == '1' and outputs.b == '2' and outputs.c == '3'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_ThreeWayAnd_MiddleFalse()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["a"] = "1",
+                ["b"] = "x",
+                ["c"] = "3"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.False(evaluator.Evaluate("outputs.a == '1' and outputs.b == '2' and outputs.c == '3'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_MixedAndOr_RespectsPrecedence()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["a"] = "1",
+                ["b"] = "2",
+                ["c"] = "3"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        // (a==1 and b==2) or c==3  → true and true → true
+        Assert.True(evaluator.Evaluate("outputs.a == '1' and outputs.b == '2' or outputs.c == '3'", context));
+        // (a==x and b==2) or c==3  → false and true → false or true → true
+        Assert.True(evaluator.Evaluate("outputs.a == 'x' and outputs.b == '2' or outputs.c == '3'", context));
+        // a==x and (b==2 or c==3)  → false and true → false
+        Assert.False(evaluator.Evaluate("outputs.a == 'x' and outputs.b == '2' or outputs.c == 'x'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_NotPrefix_NegatesResult()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "bug"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        // not (classify == doc)  → not false → true
+        Assert.True(evaluator.Evaluate("not outputs.classify == 'doc'", context));
+        // not (classify == bug)  → not true → false
+        Assert.False(evaluator.Evaluate("not outputs.classify == 'bug'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_NotWithAnd_WorksCorrectly()
+    {
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "bug",
+                ["priority"] = "low"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        // not (priority == high)  → not false → true
+        Assert.True(evaluator.Evaluate("outputs.classify == 'bug' and not outputs.priority == 'high'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_StringLiteralWithAndWord_DoesNotSplit()
+    {
+        // Verify that the word "and" inside a string literal is not treated as an operator.
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "rock and roll"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.True(evaluator.Evaluate("outputs.classify == 'rock and roll'", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_AndWithExistingTemplate_Works()
+    {
+        // Full Jinja2 template syntax with and should also work.
+        var context = new MetaExecutionContext(
+            input: "hello",
+            outputs: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classify"] = "bug",
+                ["priority"] = "high"
+            });
+
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.True(evaluator.Evaluate("{{ outputs.classify == 'bug' and outputs.priority == 'high' }}", context));
+    }
+
+    [Fact]
+    public void MetaConditionEvaluator_EmptyOrNull_ReturnsFalse()
+    {
+        var evaluator = new MetaConditionEvaluator(new MetaTemplateRenderer());
+        Assert.False(evaluator.Evaluate(null, new MetaExecutionContext("hello")));
+        Assert.False(evaluator.Evaluate("", new MetaExecutionContext("hello")));
+        Assert.False(evaluator.Evaluate("   ", new MetaExecutionContext("hello")));
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_SplitsSimpleAnd()
+    {
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("a == '1' and b == '2'");
+        Assert.Equal(2, parts.Count);
+        Assert.Equal("a == '1'", parts[0].Expression);
+        Assert.Equal("and", parts[0].Operator);
+        Assert.Equal("b == '2'", parts[1].Expression);
+        Assert.Equal("", parts[1].Operator);
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_SplitsSimpleOr()
+    {
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("a == '1' or b == '2'");
+        Assert.Equal(2, parts.Count);
+        Assert.Equal("a == '1'", parts[0].Expression);
+        Assert.Equal("or", parts[0].Operator);
+        Assert.Equal("b == '2'", parts[1].Expression);
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_DoesNotSplitInsideQuotes()
+    {
+        // " and " inside a string literal (where it's part of the value) should not split.
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("outputs.x == 'rock and roll'");
+        Assert.Single(parts);
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_SplitsThreeWay()
+    {
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("a and b and c");
+        Assert.Equal(3, parts.Count);
+        Assert.Equal("a", parts[0].Expression);
+        Assert.Equal("and", parts[0].Operator);
+        Assert.Equal("b", parts[1].Expression);
+        Assert.Equal("and", parts[1].Operator);
+        Assert.Equal("c", parts[2].Expression);
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_MixedAndOr()
+    {
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("a == '1' and b == '2' or c == '3'");
+        Assert.Equal(3, parts.Count);
+        Assert.Equal("and", parts[0].Operator);
+        Assert.Equal("or", parts[1].Operator);
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_NoOperator_ReturnsSingle()
+    {
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("outputs.classify == 'bug'");
+        Assert.Single(parts);
+    }
+
+    [Fact]
+    public void MetaSplitByTopLevelOperators_HandlesNotPrefix()
+    {
+        var parts = MetaConditionEvaluator.SplitByTopLevelOperators("not outputs.x == '1' and outputs.y == '2'");
+        Assert.Equal(2, parts.Count);
+        Assert.Equal("not outputs.x == '1'", parts[0].Expression);
+        Assert.Equal("outputs.y == '2'", parts[1].Expression);
+    }
+
     [Fact]
     public void MetaToolArgumentResolver_MergesAndRendersJsonObject()
     {

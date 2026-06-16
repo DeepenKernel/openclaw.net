@@ -120,7 +120,20 @@ internal static class Program
               openclaw compatibility <catalog> [options]
               openclaw plugins <install|remove|list|search> [options]
               openclaw skill <new|critique|generate|validate|run|package|list> [options]
-              openclaw skills <inspect|install|list> [options]
+              openclaw skills <inspect|install|list|catalog|create|proposals|meta-runs> [options]
+              openclaw skills catalog [--workdir <path> | --managed] [--kind <all|meta>] [--json]
+              openclaw skills create <name> [--kind <standard|meta>] [--description <text>] [--proposal-draft] [--workdir <path> | --managed] [--json] [--force]
+              openclaw skills proposals <session-id> [--run <run-id>] [--storage <path>] [--json]
+              openclaw skills proposals show <session-id> --proposal <id> [--storage <path>] [--json]
+              openclaw skills meta-runs <session-id> [--storage <path>] [--limit <count>] [--run <run-id>] [--verbose] [--json]
+              openclaw skills meta-runs replay <session-id> --run <run-id> [--storage <path>] [--json]
+              openclaw skills meta-runs reconstruct <session-id> --run <run-id> [--storage <path>] [--json]
+              openclaw skills meta-runs proposals <session-id> [--run <run-id>] [--storage <path>] [--json]
+              openclaw skills meta-runs proposals show <session-id> --proposal <id> [--storage <path>] [--json]
+              openclaw skills meta-runs proposals accept <session-id> --proposal <id> [--storage <path>] [--json]
+              openclaw skills meta-runs proposals dismiss <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
+              openclaw skills meta-runs proposals rollback <session-id> --proposal <id> [--reason <text>] [--storage <path>] [--json]
+              openclaw skills meta-runs proposals change <session-id> --proposal <id> --to <accept|dismiss> [--reason <text>] [--storage <path>] [--json]
               openclaw clawhub [wrapper options] [--] <clawhub args...>
 
             Common options:

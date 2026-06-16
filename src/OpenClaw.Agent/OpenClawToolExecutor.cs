@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Agent.Execution;
@@ -10,6 +11,7 @@ using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
 using OpenClaw.Core.Pipeline;
 using OpenClaw.Core.Security;
+using OpenClaw.Core.Skills;
 
 namespace OpenClaw.Agent;
 
@@ -46,6 +48,7 @@ public sealed class OpenClawToolExecutor
     private readonly ISentinelSubstitutionService _sentinelSubstitution;
     private readonly IToolGovernanceService _toolGovernance;
     private readonly IPlanExecuteVerifyOrchestrator _planExecuteVerify;
+    private readonly Func<Session, string, string?, CancellationToken, Task<string>>? _metaInvokeExecutor;
 
     public OpenClawToolExecutor(
         IReadOnlyList<ITool> tools,
@@ -64,7 +67,8 @@ public sealed class OpenClawToolExecutor
         IRedactionPipeline? redaction = null,
         ISentinelSubstitutionService? sentinelSubstitution = null,
         IToolGovernanceService? toolGovernance = null,
-        IPlanExecuteVerifyOrchestrator? planExecuteVerify = null)
+        IPlanExecuteVerifyOrchestrator? planExecuteVerify = null,
+        Func<Session, string, string?, CancellationToken, Task<string>>? metaInvokeExecutor = null)
     {
         _toolsByName = tools.ToDictionary(t => t.Name, StringComparer.Ordinal);
         _toolDeclarations = tools.Select(CreateDeclaration).Cast<AITool>().ToArray();
@@ -95,6 +99,7 @@ public sealed class OpenClawToolExecutor
         _sentinelSubstitution = sentinelSubstitution ?? new NoopSentinelSubstitutionService();
         _toolGovernance = toolGovernance ?? new NoopToolGovernanceService();
         _planExecuteVerify = planExecuteVerify ?? NoopPlanExecuteVerifyOrchestrator.Instance;
+        _metaInvokeExecutor = metaInvokeExecutor;
     }
 
     public IList<AITool> ToolDeclarations => _toolDeclarations;
@@ -474,6 +479,20 @@ public sealed class OpenClawToolExecutor
 
             if (onDelta is not null && tool is IStreamingTool streamingTool)
                 result = await ExecuteStreamingToolCollectAsync(streamingTool, executionArgsJson, onDelta, ct);
+            else if (_metaInvokeExecutor is not null &&
+                string.Equals(tool.Name, "meta_invoke", StringComparison.Ordinal) &&
+                TryGetMetaInvokeArguments(executionArgsJson, out var requestedSkill, out var requestedInput))
+            {
+                result = await _metaInvokeExecutor(session, requestedSkill!, requestedInput, ct);
+                if (result.Contains("disabled by runtime policy", StringComparison.OrdinalIgnoreCase))
+                {
+                    toolFailed = true;
+                    resultStatus = ToolResultStatuses.Blocked;
+                    failureCode = ToolFailureCodes.RuntimeCapabilityUnavailable;
+                    failureMessage = result;
+                    nextStep = "Use a non-meta skill or enable meta invocation in runtime policy.";
+                }
+            }
             else
                 result = await ExecuteToolWithRoutingAsync(tool, executionArgsJson, session, turnCtx, ct);
         }
@@ -689,6 +708,45 @@ public sealed class OpenClawToolExecutor
         try
         {
             using var _ = JsonDocument.Parse(value);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetMetaInvokeArguments(string argsJson, out string? skill, out string? input)
+    {
+        skill = null;
+        input = null;
+
+        if (string.IsNullOrWhiteSpace(argsJson))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(argsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+
+            if (!doc.RootElement.TryGetProperty("skill", out var skillElement) ||
+                skillElement.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var skillValue = skillElement.GetString();
+            if (string.IsNullOrWhiteSpace(skillValue))
+                return false;
+
+            skill = skillValue;
+            if (doc.RootElement.TryGetProperty("input", out var inputElement) &&
+                inputElement.ValueKind == JsonValueKind.String)
+            {
+                input = inputElement.GetString();
+            }
+
             return true;
         }
         catch (JsonException)
@@ -963,6 +1021,94 @@ public sealed class OpenClawToolExecutor
     private static bool IsLocalExecutionDisabled(ITool tool)
         => tool is IToolLocalExecutionPolicy { LocalExecutionSupported: false };
 
+    internal async Task<ToolExecutionResult> ExecuteSkillEntrypointAsync(
+        SkillDefinition skill,
+        string entrypoint,
+        IReadOnlyList<string> arguments,
+        string? workingDirectory,
+        string parseMode,
+        string? stdin,
+        CancellationToken ct)
+    {
+        var script = ResolveSkillScript(skill, entrypoint);
+        if (script is null)
+        {
+            return CreateImmediateResult(
+                "skill_exec",
+                "{}",
+                $"Meta step skill_exec entrypoint '{entrypoint}' was not found in skill '{skill.Name}'.",
+                resultStatus: ToolResultStatuses.Failed,
+                failureCode: "skill_exec_entrypoint_not_found",
+                failureMessage: $"Entrypoint '{entrypoint}' was not found.");
+        }
+
+        if (!IsPathWithinSkillRoot(script.AbsolutePath, skill) || ResourcePathContainsReparsePoint(skill.Location, script.AbsolutePath))
+        {
+            return CreateImmediateResult(
+                "skill_exec",
+                "{}",
+                $"Meta step skill_exec entrypoint '{entrypoint}' was rejected because it resolves outside the skill root or through a reparse point.",
+                resultStatus: ToolResultStatuses.Blocked,
+                failureCode: "skill_exec_entrypoint_denied",
+                failureMessage: $"Entrypoint '{entrypoint}' failed skill root validation.");
+        }
+
+        var command = ResolveScriptCommand(script.AbsolutePath, out var commandArguments);
+        var allArguments = commandArguments.Concat(arguments).ToArray();
+        var resolvedWorkingDirectory = ResolveSkillWorkingDirectory(skill, workingDirectory);
+
+        try
+        {
+            var executionResult = await _executionRouter.ExecuteAsync(new ExecutionRequest
+            {
+                ToolName = "skill_exec",
+                BackendName = _config.Execution.DefaultBackend,
+                Command = command,
+                Arguments = allArguments,
+                StandardInput = stdin,
+                WorkingDirectory = resolvedWorkingDirectory,
+                Environment = new Dictionary<string, string>(StringComparer.Ordinal),
+                RequireWorkspace = false,
+                AllowLocalFallback = true
+            }, fallbackBackend: null, ct);
+
+            var output = NormalizeSkillExecOutput(parseMode, executionResult.Stdout, executionResult.Stderr);
+            if (executionResult.TimedOut)
+            {
+                return CreateImmediateResult(
+                    "skill_exec",
+                    "{}",
+                    output,
+                    resultStatus: ToolResultStatuses.Failed,
+                    failureCode: "step_timeout",
+                    failureMessage: "skill_exec timed out.");
+            }
+
+            if (executionResult.ExitCode != 0)
+            {
+                return CreateImmediateResult(
+                    "skill_exec",
+                    "{}",
+                    output,
+                    resultStatus: ToolResultStatuses.Failed,
+                    failureCode: "skill_exec_failed",
+                    failureMessage: $"skill_exec exited with code {executionResult.ExitCode}.");
+            }
+
+            return CreateImmediateResult("skill_exec", "{}", output);
+        }
+        catch (Exception ex)
+        {
+            return CreateImmediateResult(
+                "skill_exec",
+                "{}",
+                $"Meta step skill_exec failed: {ex.Message}",
+                resultStatus: ToolResultStatuses.Failed,
+                failureCode: "skill_exec_failed",
+                failureMessage: ex.Message);
+        }
+    }
+
     private static ToolSandboxException CreateLocalExecutionUnavailableException(ITool tool)
         => new(
             GetLocalExecutionUnavailableMessage(tool),
@@ -1052,6 +1198,111 @@ public sealed class OpenClawToolExecutor
             message.Contains("execution backend", StringComparison.OrdinalIgnoreCase)
             ? ToolFailureCodes.RuntimeCapabilityUnavailable
             : ToolFailureCodes.ToolFailed;
+    }
+
+    private static SkillResource? ResolveSkillScript(SkillDefinition skill, string entrypoint)
+        => skill.Resources.FirstOrDefault(resource =>
+            resource.Kind == SkillResourceKind.Script &&
+            (string.Equals(resource.Name, entrypoint, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(resource.RelativePath, $"scripts/{entrypoint}", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(resource.RelativePath, entrypoint.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)));
+
+    private static string ResolveSkillWorkingDirectory(SkillDefinition skill, string? workingDirectory)
+    {
+        var skillRoot = Path.GetFullPath(skill.Location);
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+            return skillRoot;
+
+        var candidate = Path.GetFullPath(Path.Combine(skillRoot, workingDirectory));
+        var rootWithSep = skillRoot.EndsWith(Path.DirectorySeparatorChar) ? skillRoot : skillRoot + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(candidate, skillRoot, comparison) && !candidate.StartsWith(rootWithSep, comparison))
+            throw new InvalidOperationException("skill_exec working directory must remain inside the skill root.");
+
+        return candidate;
+    }
+
+    private static string ResolveScriptCommand(string scriptAbsolutePath, out string[] prefixArguments)
+    {
+        var extension = Path.GetExtension(scriptAbsolutePath);
+        if (extension.Equals(".ps1", StringComparison.OrdinalIgnoreCase))
+        {
+            prefixArguments = ["-NoProfile", "-File", scriptAbsolutePath];
+            return OperatingSystem.IsWindows() ? "pwsh" : "pwsh";
+        }
+
+        prefixArguments = [scriptAbsolutePath];
+        return scriptAbsolutePath;
+    }
+
+    private static string NormalizeSkillExecOutput(string parseMode, string stdout, string stderr)
+    {
+        var output = string.IsNullOrWhiteSpace(stdout) ? stderr : stdout;
+        var trimmed = output.Trim();
+
+        if (string.Equals(parseMode, "json", StringComparison.OrdinalIgnoreCase))
+        {
+            using var _ = JsonDocument.Parse(string.IsNullOrWhiteSpace(trimmed) ? "null" : trimmed);
+        }
+
+        return trimmed;
+    }
+
+    private static bool IsPathWithinSkillRoot(string resourceAbsolutePath, SkillDefinition skill)
+    {
+        if (string.IsNullOrEmpty(skill.Location))
+            return true;
+
+        try
+        {
+            var skillRoot = Path.GetFullPath(skill.Location);
+            var resolved = Path.GetFullPath(resourceAbsolutePath);
+            var rootWithSep = skillRoot.EndsWith(Path.DirectorySeparatorChar)
+                ? skillRoot
+                : skillRoot + Path.DirectorySeparatorChar;
+            return resolved.StartsWith(rootWithSep,
+                RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ResourcePathContainsReparsePoint(string skillLocation, string resourceAbsolutePath)
+    {
+        if (string.IsNullOrWhiteSpace(skillLocation))
+            return false;
+
+        try
+        {
+            var skillRoot = Path.GetFullPath(skillLocation);
+            var resolved = Path.GetFullPath(resourceAbsolutePath);
+            var relative = Path.GetRelativePath(skillRoot, resolved);
+            if (relative == ".." ||
+                relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal) ||
+                Path.IsPathRooted(relative))
+            {
+                return true;
+            }
+
+            var current = skillRoot;
+            foreach (var segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                    return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static string? BuildFailureNextStep(string toolName, string? failureCode)

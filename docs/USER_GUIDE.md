@@ -315,6 +315,99 @@ Skill locations (precedence order):
 3. Bundled: `skills/<skill>/SKILL.md` (shipped with the gateway)
 4. Extra dirs: `OpenClaw:Skills:Load:ExtraDirs`
 
+### Meta skill structured output contract
+
+Meta skills can set `final_text_mode: structured` to return a machine-readable envelope instead of plain text.
+
+Supported `final_text_mode` values for `kind: meta` skills:
+
+- `auto`: use the latest executed step output.
+- `raw`: same behavior as `auto` for current runtime compatibility.
+- `step:<step-id>`: use a specific step output as final text. The referenced `<step-id>` must exist in `composition.steps`.
+- `structured`: return the structured envelope shown below.
+
+Invalid `final_text_mode` values now fail fast during skill parsing (the skill is rejected and not loaded).
+
+For `llm_classify` steps, parser governance also validates:
+
+- every `route` label must appear in declared `options`
+- every `route` target step ID must exist in the same `composition.steps`
+
+General composition rule: when a step declares `with`, it must be a JSON object (non-object payloads are rejected during parsing).
+
+Step-kind field consistency rule: `skill_exec` steps must declare a non-empty `skill` value.
+Step-kind field consistency rule: `tool_call` steps must declare `tool` and must not declare `skill`.
+Step-kind field consistency rule: `skill_exec` steps must not declare `tool`.
+Step-kind field consistency rule: `agent` steps must not declare `tool`.
+Step-kind field consistency rule: `llm_chat`, `llm_classify`, and `user_input` steps must not declare `skill` or `tool`.
+
+### Skill loading diagnostics (`error_code`)
+
+When a skill file fails to parse during scanning, OpenClaw logs a warning with a normalized parser diagnostic code:
+
+- `Failed to parse skill at <path> (error_code=<code>)`
+
+This applies to both root `SKILL.md` and `<skill>/SKILL.md` directory scans.
+
+Current parse-phase `error_code` values include:
+
+- `invalid_frontmatter`: frontmatter delimiters are missing or malformed.
+- `missing_name`: required `name` is missing in frontmatter.
+- `invalid_kind`: `kind` is not one of the supported values.
+- `missing_meta_composition`: `kind: meta` was declared without `composition`.
+- `invalid_meta_composition`: `composition` JSON is malformed or has invalid shape.
+- `invalid_with_payload`: a step declared `with` but it was not a JSON object.
+- `invalid_step_kind_fields`: step field constraints were violated for the declared `kind`.
+- `unsupported_step_kind`: composition references a step kind not supported by parser governance.
+- `duplicate_step_id`: composition contains duplicate step IDs.
+- `invalid_dependency`: `depends_on` references a missing step ID.
+- `self_dependency`: a step depends on itself.
+- `dependency_cycle`: composition dependency graph contains a cycle.
+- `invalid_classify_step`: `llm_classify` `options` / `route` governance failed.
+- `invalid_final_text_mode`: `final_text_mode` is invalid for current composition.
+- `parse_failed`: fallback when parsing failed but no more specific code applies.
+
+Current response shape:
+
+```json
+{
+  "skill": "meta-flow",
+  "final_text": "...",
+  "error": "...",
+  "error_code": "dependency_not_completed",
+  "steps": [
+    {
+      "id": "first",
+      "kind": "tool_call",
+      "status": "failed",
+      "duration_ms": 12.5,
+      "continued": false,
+      "failure_code": "tool_failed"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `error` and `error_code` are present only when the meta run fails.
+- `steps` is present in structured mode even when early validation fails (it may be empty).
+- `failure_code` is step-level and only appears for failed steps.
+- For `user_input` steps without available value/default, runtime saves a session checkpoint (`MetaExecutionCheckpoint`) and returns `user_input_required`. The next invocation with user input resumes from the checkpoint without re-running completed steps.
+
+Current normalized top-level `error_code` values:
+
+- `invalid_tool_step`: a `tool_call` step did not declare `tool`.
+- `unsupported_step_kind`: step `kind` is not supported by the current runtime.
+- `step_failed`: a step failed and execution did not continue.
+- `invalid_dag`: duplicate step IDs, missing dependencies, self-dependencies, cycles, or stalled graph progression.
+- `invalid_classification`: an `llm_classify` result was outside declared `options`.
+- `user_input_required`: a `user_input` step could not resolve a value/default in the current execution context.
+- `metadata_capability_denied`: a meta `tool_call` step requested a tool that is not in metadata capabilities allowlist.
+- `meta_step_error`: fallback for other meta-step failures.
+
+When `final_text_mode` is not `structured`, meta execution returns plain text and prepends `Error:` on failure.
+
 ### Installing skills from ClawHub
 
 OpenClaw.NET skill folders are compatible with the upstream OpenClaw skill format (a folder containing `SKILL.md`).

@@ -159,6 +159,14 @@ internal static partial class RuntimeInitializationExtensions
             new MemoryGetTool(services.MemoryStore),
             new ProfileWriteTool(services.UserProfileStore),
             new SessionsYieldTool(services.SessionManager, services.Pipeline, services.MemoryStore),
+
+            new EmitTextTool(),
+            new MetaSkillFillSlotsTool(),
+            new MetaSkillAssembleTool(),
+            new MetaSkillLintRunTool(),
+            new MetaSkillSmokeRunTool(),
+            new MetaSkillRuntimeE2ERunTool(),
+            new MetaSkillPersistProposalTool(),
         };
 
         if (browserAvailability.Registered)

@@ -47,6 +47,15 @@ public sealed class InMemoryGoalServiceTests
     }
 
     [Fact]
+    public void CreateGoal_NegativeTokenBaseline_Throws()
+    {
+        var svc = CreateService();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            svc.CreateGoal("s1", "fix the bug", 0, -1));
+    }
+
+    [Fact]
     public void CreateGoal_ObjectiveTooLong_Throws()
     {
         var svc = CreateService();
@@ -187,10 +196,13 @@ public sealed class InMemoryGoalServiceTests
     {
         var svc = CreateService();
         svc.CreateGoal("s1", "test", 0, 0);
+        svc.CreateGoal("s2", "test 2", 0, 0);
 
         Assert.Equal(1, svc.IncrementContinuationCount("s1"));
+        Assert.Equal(1, svc.IncrementContinuationCount("s2"));
         Assert.Equal(2, svc.IncrementContinuationCount("s1"));
         Assert.Equal(2, svc.GetGoal("s1")!.ContinuationCount);
+        Assert.Equal(1, svc.GetGoal("s2")!.ContinuationCount);
     }
 
     [Fact]

@@ -33,6 +33,8 @@ public sealed class InMemoryGoalService : IGoalService
             throw new ArgumentException($"Objective exceeds max length of {SessionGoal.MaxObjectiveLength} characters.");
         if (tokenBudget < 0)
             throw new ArgumentOutOfRangeException(nameof(tokenBudget), "Token budget cannot be negative.");
+        if (tokensAtStart < 0)
+            throw new ArgumentOutOfRangeException(nameof(tokensAtStart), "Token baseline cannot be negative.");
 
         var goal = new SessionGoal
         {

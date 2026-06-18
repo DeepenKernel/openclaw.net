@@ -132,6 +132,30 @@ public sealed class AgentRuntimeGoalIntegrationTests
     }
 
     [Fact]
+    public void EvaluateGoalContinuation_WebSocketChannel_AllowsContinuation()
+    {
+        // WebSocket (webchat) is an interactive channel — Goal should auto-continue
+        var logger = Substitute.For<ILogger<InMemoryGoalService>>();
+        var goalService = new InMemoryGoalService(logger);
+        var integration = new AgentRuntimeGoalIntegration(goalService);
+
+        goalService.CreateGoal("s1", "fix the bug", 50000, 100);
+        var session = new Session
+        {
+            Id = "s1",
+            ChannelId = "websocket",
+            SenderId = "test-sender",
+            History = new List<ChatTurn>(),
+            TotalInputTokens = 100,
+            TotalOutputTokens = 200,
+        };
+
+        var result = integration.EvaluateGoalContinuation(session, 1, 50, "I'm still working on it");
+        Assert.NotNull(result);
+        Assert.Contains("fix the bug", result);
+    }
+
+    [Fact]
     public void EvaluateGoalContinuation_BudgetExceeded_ReturnsNull()
     {
         var logger = Substitute.For<ILogger<InMemoryGoalService>>();

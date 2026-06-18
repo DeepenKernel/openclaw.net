@@ -15,10 +15,12 @@ public sealed class AgentRuntimeGoalIntegration
     private readonly IGoalService _goalService;
     private readonly ILogger? _logger;
 
-    /// <summary>Session types where auto-continuation is allowed.</summary>
+    /// <summary>Session types where auto-continuation is allowed (interactive human presence).</summary>
     private static readonly HashSet<string> InteractiveChannelPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "cli", "tui", "terminal", "console", "companion"
+        "cli", "tui", "terminal", "console", "companion",
+        "websocket", // WebChat UI — human interacting via browser
+        "discord", "slack", "teams", "telegram", "signal", "whatsapp", "sms"
     };
 
     public AgentRuntimeGoalIntegration(IGoalService goalService, ILogger? logger = null)

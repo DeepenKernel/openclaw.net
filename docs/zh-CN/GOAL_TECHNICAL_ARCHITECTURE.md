@@ -58,7 +58,7 @@ Goal 是一个会话级持久化目标机制。当模型停止（`toolCalls.Coun
 
 ### 生态系统对比
 
-| 特性 | Claude Code | Codex | 上游 OpenClaw | OpenClaw.NET |
+| 特性 | Claude Code | Codex | OpenClaw | OpenClaw.NET |
 |---------|-------------|-------|-------------------|--------------|
 | 触发方式 | Hook on Stop | Hook on Stop | Hook on Stop | **运行时循环内联** |
 | 状态数 | 3 | 5 | 6 | **6** |

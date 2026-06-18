@@ -9,10 +9,13 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Agent;
+using OpenClaw.Agent.Goal;
 using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
+using OpenClaw.Core.Models.Goal;
 using OpenClaw.Core.Observability;
+using OpenClaw.Core.Services;
 using OpenClaw.Core.Skills;
 
 namespace OpenClaw.MicrosoftAgentFrameworkAdapter;
@@ -42,6 +45,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly int _compactionThreshold;
     private readonly int _compactionKeepRecent;
     private readonly long _sessionTokenBudget;
+    private readonly IGoalService? _goalService;
+    private readonly AgentRuntimeGoalIntegration? _goalIntegration;
     private readonly MemoryRecallConfig? _recall;
     private readonly bool _requireToolApproval;
     private readonly ITurnTokenUsageObserver? _turnTokenUsageObserver;
@@ -123,6 +128,12 @@ public sealed class MafAgentRuntime : IAgentRuntime
             .Select(tool => (AITool)new MafToolAdapter(tool, _toolExecutor))
             .ToArray();
         _mafToolsByName = _mafTools.ToDictionary(tool => tool.Name, StringComparer.Ordinal);
+
+        // Goal system: resolve IGoalService from DI (optional — Goal is a progressive enhancement)
+        _goalService = context.Services.GetService(typeof(IGoalService)) as IGoalService;
+        _goalIntegration = _goalService is not null
+            ? new AgentRuntimeGoalIntegration(_goalService, logger)
+            : null;
 
         ApplySkills(context.Skills);
     }
@@ -223,6 +234,19 @@ public sealed class MafAgentRuntime : IAgentRuntime
 
             var messages = BuildMessages(session);
             await TryInjectRecallAsync(messages, userMessage, ct);
+
+            // Inject Goal activation prompt if a goal is active
+            if (_goalIntegration is not null)
+            {
+                var goalPrompt = _goalIntegration.BuildGoalSystemPrompt(session.Id);
+                if (goalPrompt is not null)
+                {
+                    // Insert after system prompts but before user message
+                    messages.Insert(1, new ChatMessage(ChatRole.System, goalPrompt));
+                    _logger?.LogInformation("[{CorrelationId}] Goal activation prompt injected for session {SessionId}",
+                        turnCtx.CorrelationId, session.Id);
+                }
+            }
 
             using var scope = MafExecutionContextScope.Push(new MafExecutionContext
             {
@@ -376,6 +400,14 @@ public sealed class MafAgentRuntime : IAgentRuntime
 
             var messages = BuildMessages(session);
             await TryInjectRecallAsync(messages, userMessage, ct);
+
+            // Inject Goal activation prompt (streaming path)
+            if (_goalIntegration is not null)
+            {
+                var goalPrompt = _goalIntegration.BuildGoalSystemPrompt(session.Id);
+                if (goalPrompt is not null)
+                    messages.Insert(1, new ChatMessage(ChatRole.System, goalPrompt));
+            }
 
             producerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             producer = ProduceStreamingRunAsync(

@@ -186,7 +186,7 @@ The pipeline never blocks tool output from reaching the LLM.
 
 ## Integration
 
-TokenJuice is a native C# plugin (`OpenClaw.Plugins.TokenJuice`) registered through the `INativeDynamicPlugin` interface. It implements `IToolResultInterceptor`, which runs in the `OpenClawToolExecutor` pipeline *after* redaction and *before* `IToolHook.AfterExecute`:
+TokenJuice is a system-level built-in plugin (`OpenClaw.Plugins.TokenJuice`) with a static factory class `TokenJuicePluginRegistration` that creates the interceptor instance. It implements `IToolResultInterceptor`, which runs in the `OpenClawToolExecutor` pipeline *after* redaction and *before* `IToolHook.AfterExecute`:
 
 ```csharp
 // Tool execution pipeline order:
@@ -197,6 +197,52 @@ TokenJuice is a native C# plugin (`OpenClaw.Plugins.TokenJuice`) registered thro
 // 5. IToolHook.AfterExecute   (observability, logging)
 // 6. Return to LLM context
 ```
+
+### Registration
+
+TokenJuice no longer uses `INativeDynamicPlugin` dynamic loading (the `openclaw.native-plugin.json` manifest has been removed). Instead, it is explicitly created and injected into the interceptor pipeline at Gateway startup:
+
+```csharp
+// RuntimeInitializationExtensions.cs (Gateway startup flow)
+var interceptors = new List<IToolResultInterceptor>
+{
+    TokenJuicePluginRegistration.CreateInterceptor()
+};
+
+// Passed through: CreateAgentRuntime → AgentRuntimeFactoryContext.Interceptors
+// → AgentRuntime → OpenClawToolExecutor (constructor injection)
+```
+
+`TokenJuicePluginRegistration` is a static factory class following the `PaymentPluginRegistration` pattern:
+
+```csharp
+// TokenJuicePluginRegistration.cs
+public static class TokenJuicePluginRegistration
+{
+    public static TokenJuiceInterceptor CreateInterceptor(
+        IReadOnlyList<TokenJuiceRule>? rules = null,
+        SemanticDensityCalculator? density = null,
+        int? maxInlineChars = null)
+    {
+        var mergedRules = rules ?? RuleLoader.LoadMergedRules();
+        return new TokenJuiceInterceptor(mergedRules, density, maxInlineChars);
+    }
+}
+```
+
+### Interceptor Data Flow
+
+```
+Gateway Startup
+  └─ TokenJuicePluginRegistration.CreateInterceptor()
+       └─ CreateAgentRuntime(..., interceptors)
+            └─ AgentRuntimeFactoryContext.Interceptors
+                 └─ AgentRuntime(..., interceptors)
+                      └─ OpenClawToolExecutor(..., interceptors: interceptors)
+                           └─ Auto-applies TokenJuice compression after tool execution
+```
+
+This design aligns TokenJuice with `OpenClaw.Plugins.Payment`: both are system-level built-in plugins, explicitly registered at Gateway startup, with no reliance on dynamic loading.
 
 ## Testing
 
@@ -217,4 +263,7 @@ Full regression: 2181 tests pass (zero regressions).
 - Design spec: `docs/superpowers/specs/2026-06-19-tokenjuice-migration-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-06-19-tokenjuice-migration.md`
 - Source: `src/OpenClaw.Plugins.TokenJuice/`
+- Registration entry point: `src/OpenClaw.Plugins.TokenJuice/TokenJuicePluginRegistration.cs`
+- Interceptor: `src/OpenClaw.Plugins.TokenJuice/Reduction/TokenJuiceInterceptor.cs`
+- Gateway injection point: `src/OpenClaw.Gateway/Composition/RuntimeInitializationExtensions.cs`
 - Tests: `src/OpenClaw.Tests/TokenJuiceIntegrationTests.cs`

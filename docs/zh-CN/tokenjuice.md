@@ -195,7 +195,7 @@ $$\rho = \frac{U}{\max(L, 1)} \cdot \frac{N}{\max(C, 1)}$$
 
 ## 集成方式
 
-TokenJuice 是一个原生 C# 插件（`OpenClaw.Plugins.TokenJuice`），通过 `INativeDynamicPlugin` 接口注册。它实现了 `IToolResultInterceptor`，在 `OpenClawToolExecutor` 管道中的执行顺序为：**redaction 之后、`IToolHook.AfterExecute` 之前**：
+TokenJuice 是一个系统级内置插件（`OpenClaw.Plugins.TokenJuice`），通过静态工厂类 `TokenJuicePluginRegistration` 创建拦截器实例。它实现了 `IToolResultInterceptor`，在 `OpenClawToolExecutor` 管道中的执行顺序为：**redaction 之后、`IToolHook.AfterExecute` 之前**：
 
 ```csharp
 // 工具执行管道顺序：
@@ -206,6 +206,52 @@ TokenJuice 是一个原生 C# 插件（`OpenClaw.Plugins.TokenJuice`），通过
 // 5. IToolHook.AfterExecute   （可观测性、日志）
 // 6. 返回 LLM 上下文
 ```
+
+### 注册方式
+
+TokenJuice 不再通过 `INativeDynamicPlugin` 动态加载（已移除 `openclaw.native-plugin.json` 清单）。改为在 Gateway 启动时显式创建并注入拦截器管道：
+
+```csharp
+// RuntimeInitializationExtensions.cs（Gateway 启动流程）
+var interceptors = new List<IToolResultInterceptor>
+{
+    TokenJuicePluginRegistration.CreateInterceptor()
+};
+
+// 传递至 CreateAgentRuntime → AgentRuntimeFactoryContext.Interceptors
+// → AgentRuntime → OpenClawToolExecutor（构造函数注入）
+```
+
+`TokenJuicePluginRegistration` 是一个静态工厂类，参照 `PaymentPluginRegistration` 的模式：
+
+```csharp
+// TokenJuicePluginRegistration.cs
+public static class TokenJuicePluginRegistration
+{
+    public static TokenJuiceInterceptor CreateInterceptor(
+        IReadOnlyList<TokenJuiceRule>? rules = null,
+        SemanticDensityCalculator? density = null,
+        int? maxInlineChars = null)
+    {
+        var mergedRules = rules ?? RuleLoader.LoadMergedRules();
+        return new TokenJuiceInterceptor(mergedRules, density, maxInlineChars);
+    }
+}
+```
+
+### 拦截器数据流
+
+```
+Gateway Startup
+  └─ TokenJuicePluginRegistration.CreateInterceptor()
+       └─ CreateAgentRuntime(..., interceptors)
+            └─ AgentRuntimeFactoryContext.Interceptors
+                 └─ AgentRuntime(..., interceptors)
+                      └─ OpenClawToolExecutor(..., interceptors: interceptors)
+                           └─ 工具执行后自动应用 TokenJuice 压缩
+```
+
+此设计使 TokenJuice 与 `OpenClaw.Plugins.Payment` 风格一致：均为系统级内置插件，在 Gateway 启动时显式注册，不依赖动态加载机制。
 
 ## 测试
 
@@ -232,5 +278,7 @@ TokenJuice 是一个原生 C# 插件（`OpenClaw.Plugins.TokenJuice`），通过
 - 设计规格：`docs/superpowers/specs/2026-06-19-tokenjuice-migration-design.md`
 - 实现计划：`docs/superpowers/plans/2026-06-19-tokenjuice-migration.md`
 - 源码：`src/OpenClaw.Plugins.TokenJuice/`
+- 注册入口：`src/OpenClaw.Plugins.TokenJuice/TokenJuicePluginRegistration.cs`
+- 拦截器：`src/OpenClaw.Plugins.TokenJuice/Reduction/TokenJuiceInterceptor.cs`
+- Gateway 注入点：`src/OpenClaw.Gateway/Composition/RuntimeInitializationExtensions.cs`
 - 测试：`src/OpenClaw.Tests/TokenJuiceIntegrationTests.cs`
-- 迁移方案：`docs/zh-CN/Tokenjuice Migration Plan.md`

@@ -51,10 +51,10 @@ public static class RuleLoader
 
         foreach (var resourceName in assembly.GetManifestResourceNames())
         {
-            if (!resourceName.Contains(".rules."))
+            // Match: OpenClaw.Plugins.TokenJuice.<family>\<name>.json
+            if (!resourceName.StartsWith("OpenClaw.Plugins.TokenJuice.", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            // Skip non-JSON resources
             if (!resourceName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 continue;
 

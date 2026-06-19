@@ -559,7 +559,14 @@ public sealed class OpenClawToolExecutor
             {
                 try
                 {
-                    result = await interceptor.InterceptAsync(tool.Name, persistedArgsJson, result, ct);
+                    result = await interceptor.InterceptAsync(
+                        ReductionContext.From(
+                            tool.Name,
+                            persistedArgsJson,
+                            result,
+                            isError: toolFailed,
+                            exitCode: toolFailed ? 1 : 0),
+                        ct);
                 }
                 catch (Exception ex)
                 {

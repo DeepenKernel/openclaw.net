@@ -24,22 +24,31 @@ public sealed class TokenJuiceInterceptor : IToolResultInterceptor
         _maxInlineChars = maxInlineChars;
     }
 
-    public ValueTask<string> InterceptAsync(
-        string toolName, string argumentsJson, string rawOutput, CancellationToken ct)
+    public ValueTask<string> InterceptAsync(ReductionContext context, CancellationToken ct)
     {
+        var toolName = context.ToolName;
+        var argumentsJson = context.ArgumentsJson;
+        var rawOutput = context.RawOutput;
+
+        if (context.BypassReduction)
+            return new ValueTask<string>(rawOutput);
+
         // Escape hatch: --raw / --full
         if (argumentsJson.Contains("--raw") || argumentsJson.Contains("--full"))
             return new ValueTask<string>(rawOutput);
 
         var command = ExtractCommand(argumentsJson);
         var argv = CommandArgvParser.Parse(command);
-        var exitCode = 0;
+        var exitCode = context.ExitCode;
 
         // Rule matching
         var rule = RuleMatcher.SelectRule(_rules, toolName, command, argv, rawOutput, exitCode);
 
         if (rule is not null)
         {
+            if (context.IsError && (rule.Failure?.PreserveOnFailure ?? false) is false)
+                return new ValueTask<string>(rawOutput);
+
             var (summary, facts) = ReductionStrategies.Reduce(rule, rawOutput, exitCode);
             if (!string.IsNullOrEmpty(summary))
             {
@@ -48,7 +57,7 @@ public sealed class TokenJuiceInterceptor : IToolResultInterceptor
                     return new ValueTask<string>(formatted);
             }
         }
-        else if (_density.ShouldReduce(rawOutput))
+        else if (!context.IsError && _density.ShouldReduce(rawOutput))
         {
             var fallback = _rules.FirstOrDefault(r => r.Id == "generic/fallback");
             if (fallback is not null)

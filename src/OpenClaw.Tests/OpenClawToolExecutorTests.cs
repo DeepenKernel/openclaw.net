@@ -327,6 +327,30 @@ public sealed class OpenClawToolExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenToolFails_PassesFailureContextToInterceptors()
+    {
+        var tool = new ThrowingTool("Execution backend 'docker' is not configured.");
+        var interceptor = new RecordingInterceptor();
+        var executor = CreateExecutor([tool], interceptors: [interceptor]);
+
+        var result = await executor.ExecuteAsync(
+            "auth_bound",
+            """{"action":"restricted"}""",
+            callId: null,
+            CreateSession(),
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
+        Assert.NotNull(interceptor.Context);
+        Assert.True(interceptor.Context.Value.IsError);
+        Assert.Equal(1, interceptor.Context.Value.ExitCode);
+        Assert.Contains("execution backend", interceptor.Context.Value.RawOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_RouteToolsDisabled_BlocksDirectToolExecution()
     {
         var tool = new SandboxCapableEchoTool(ToolSandboxMode.Prefer, "local-result");
@@ -455,7 +479,8 @@ public sealed class OpenClawToolExecutorTests
         IReadOnlyList<ITool> tools,
         IToolSandbox? toolSandbox = null,
         GatewayConfig? config = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        IReadOnlyList<IToolResultInterceptor>? interceptors = null)
         => new(
             tools,
             toolTimeoutSeconds: 5,
@@ -465,7 +490,8 @@ public sealed class OpenClawToolExecutorTests
             metrics: new RuntimeMetrics(),
             logger: logger ?? NullLogger.Instance,
             config: config,
-            toolSandbox: toolSandbox);
+            toolSandbox: toolSandbox,
+            interceptors: interceptors);
 
     private static Session CreateSession(string channelId = "websocket", string? prompt = null)
         => new()
@@ -553,6 +579,19 @@ public sealed class OpenClawToolExecutorTests
 
         public ValueTask<string> ExecuteAsync(string argumentsJson, CancellationToken ct)
             => throw new InvalidOperationException("Local execution should not be invoked.");
+    }
+
+    private sealed class RecordingInterceptor : IToolResultInterceptor
+    {
+        public int Order => 0;
+        public string Name => "recording";
+        public ReductionContext? Context { get; private set; }
+
+        public ValueTask<string> InterceptAsync(ReductionContext context, CancellationToken ct)
+        {
+            Context = context;
+            return new ValueTask<string>(context.RawOutput);
+        }
     }
 
     private sealed class ListLogger : ILogger

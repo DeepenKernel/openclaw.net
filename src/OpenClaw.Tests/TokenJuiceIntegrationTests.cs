@@ -1,3 +1,4 @@
+using OpenClaw.Core.Abstractions;
 using OpenClaw.Plugins.TokenJuice.Matching;
 using OpenClaw.Plugins.TokenJuice.Reduction;
 using OpenClaw.Plugins.TokenJuice.Rules;
@@ -78,8 +79,11 @@ public class TokenJuiceIntegrationTests
         var input = "some output\n".PadRight(5000, 'x');
 
         var result = await interceptor.InterceptAsync(
-            "exec", @"{""command"":""echo --raw"",""argv"":[""echo"",""--raw""]}",
-            input, TestContext.Current.CancellationToken);
+            ReductionContext.From(
+                "exec",
+                @"{""command"":""echo --raw"",""argv"":[""echo"",""--raw""]}",
+                input),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(input, result);
     }
@@ -92,8 +96,11 @@ public class TokenJuiceIntegrationTests
         var input = "important data";
 
         var result = await interceptor.InterceptAsync(
-            "exec", @"{""command"":""git diff --full""}",
-            input, TestContext.Current.CancellationToken);
+            ReductionContext.From(
+                "exec",
+                @"{""command"":""git diff --full""}",
+                input),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(input, result);
     }
@@ -161,12 +168,42 @@ public class TokenJuiceIntegrationTests
         var interceptor = new TokenJuiceInterceptor(rules);
 
         var result = await interceptor.InterceptAsync(
-            "exec",
-            @"{""command"":""dotnet build"",""argv"":[""dotnet"",""build""]}",
-            dotnetOutput,
+            ReductionContext.From(
+                "exec",
+                @"{""command"":""dotnet build"",""argv"":[""dotnet"",""build""]}",
+                dotnetOutput),
             TestContext.Current.CancellationToken);
 
         Assert.True(result.Length < dotnetOutput.Length,
             $"Interceptor did not reduce output. Original: {dotnetOutput.Length}, Result: {result.Length}");
+    }
+
+    [Fact]
+    public async Task Interceptor_FailedDotnetBuildOutput_IncludesNonZeroExit()
+    {
+        var failedOutput = string.Join(
+            "\n",
+            Enumerable.Range(1, 40).Select(i => $"Project {i} restored.").Concat([
+                "Program.cs(10,5): error CS1002: ; expected",
+                "Build FAILED.",
+                "    0 Warning(s)",
+                "    1 Error(s)"
+            ]));
+        var rules = LoadRules();
+        var interceptor = new TokenJuiceInterceptor(rules);
+
+        var result = await interceptor.InterceptAsync(
+            ReductionContext.From(
+                "exec",
+                @"{""command"":""dotnet build"",""argv"":[""dotnet"",""build""]}",
+                failedOutput,
+                isError: true,
+                exitCode: 1),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Length < failedOutput.Length);
+        Assert.Contains("exit 1", result, StringComparison.Ordinal);
+        Assert.Contains("error", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Build FAILED", result, StringComparison.OrdinalIgnoreCase);
     }
 }

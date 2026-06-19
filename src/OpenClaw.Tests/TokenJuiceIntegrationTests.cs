@@ -70,7 +70,7 @@ public class TokenJuiceIntegrationTests
 
         var result = await interceptor.InterceptAsync(
             "exec", @"{""command"":""echo --raw"",""argv"":[""echo"",""--raw""]}",
-            input, CancellationToken.None);
+            input, TestContext.Current.CancellationToken);
 
         Assert.Equal(input, result);
     }
@@ -84,7 +84,7 @@ public class TokenJuiceIntegrationTests
 
         var result = await interceptor.InterceptAsync(
             "exec", @"{""command"":""git diff --full""}",
-            input, CancellationToken.None);
+            input, TestContext.Current.CancellationToken);
 
         Assert.Equal(input, result);
     }
@@ -144,7 +144,7 @@ public class TokenJuiceIntegrationTests
             "exec",
             @"{""command"":""dotnet build"",""argv"":[""dotnet"",""build""]}",
             dotnetOutput,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.True(result.Length < dotnetOutput.Length,
             $"Interceptor did not reduce output. Original: {dotnetOutput.Length}, Result: {result.Length}");

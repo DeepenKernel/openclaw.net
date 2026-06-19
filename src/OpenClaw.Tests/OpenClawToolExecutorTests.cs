@@ -45,7 +45,7 @@ public sealed class OpenClawToolExecutorTests
             },
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Contains("requires approval", result.ResultText, StringComparison.OrdinalIgnoreCase);
         await tool.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
@@ -65,7 +65,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("local-result", result.ResultText);
         Assert.Equal(1, tool.LocalExecutionCount);
@@ -110,7 +110,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("formatted:sandbox-result", result.ResultText);
         Assert.Equal(0, tool.LocalExecutionCount);
@@ -142,7 +142,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("local-result", result.ResultText);
         Assert.Equal(1, tool.LocalExecutionCount);
@@ -165,7 +165,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Contains("requires sandboxing", result.ResultText, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, tool.LocalExecutionCount);
@@ -208,7 +208,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("local-result", result.ResultText);
         Assert.Equal(1, tool.LocalExecutionCount);
@@ -250,7 +250,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Contains("denied by hook", result.ResultText, StringComparison.OrdinalIgnoreCase);
         await sandbox.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
@@ -270,7 +270,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
         Assert.Equal(ToolFailureCodes.OperatorAuthRequired, result.FailureCode);
@@ -294,7 +294,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
         Assert.Equal(ToolFailureCodes.RuntimeCapabilityUnavailable, result.FailureCode);
@@ -317,7 +317,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
         Assert.Equal(ToolFailureCodes.RuntimeCapabilityUnavailable, result.FailureCode);
@@ -342,7 +342,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
         Assert.Equal(ToolFailureCodes.PresetBlocked, result.FailureCode);
@@ -378,7 +378,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("meta:meta-research:hello", result.ResultText);
         Assert.Equal(1, callbackCalls);
@@ -413,7 +413,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("tool-fallback", result.ResultText);
         Assert.Equal(0, callbackCalls);
@@ -443,7 +443,7 @@ public sealed class OpenClawToolExecutorTests
             CreateTurnContext(),
             isStreaming: false,
             approvalCallback: null,
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
         Assert.Equal(ToolFailureCodes.RuntimeCapabilityUnavailable, result.FailureCode);

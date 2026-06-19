@@ -199,7 +199,7 @@ public sealed class MicrosoftExtensionsAiProviderBridgeTests : IDisposable
             RuntimeModeResolver.Resolve(new RuntimeConfig { Mode = "jit" }, dynamicCodeSupported: true),
             NullLogger.Instance);
 
-        _ = await host.LoadAsync(null, CancellationToken.None);
+        _ = await host.LoadAsync(null, TestContext.Current.CancellationToken);
 
         var provider = Assert.Single(host.ProviderRegistrationsDetailed);
         Assert.Equal("meai-native-load", provider.ProviderId);
@@ -218,7 +218,7 @@ public sealed class MicrosoftExtensionsAiProviderBridgeTests : IDisposable
             RuntimeModeResolver.Resolve(new RuntimeConfig { Mode = "jit" }, dynamicCodeSupported: true),
             NullLogger.Instance);
 
-        _ = await host.LoadAsync(null, CancellationToken.None);
+        _ = await host.LoadAsync(null, TestContext.Current.CancellationToken);
         var provider = Assert.Single(host.ProviderRegistrationsDetailed);
 
         var gatewayConfig = new GatewayConfig
@@ -261,7 +261,7 @@ public sealed class MicrosoftExtensionsAiProviderBridgeTests : IDisposable
                 EstimatedInputTokens = 4,
                 EstimatedInputTokensByComponent = new InputTokenComponentEstimate()
             },
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("meai-runtime", result.ProviderId);
         Assert.Equal("runtime-model", result.ModelId);

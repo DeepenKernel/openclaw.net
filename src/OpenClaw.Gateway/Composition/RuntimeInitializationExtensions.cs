@@ -63,7 +63,6 @@ internal static partial class RuntimeInitializationExtensions
         var services = ResolveRuntimeServices(app);
         RecordLegacyMafConfigNotice(app, services, startupLogger, startupNoticeSink);
         var providerSmokeRegistry = app.Services.GetRequiredService<ProviderSmokeRegistry>();
-
         var approvalService = app.Services.GetRequiredService<ToolApprovalService>();
         Telemetry.RegisterApprovalQueueGauge(() => approvalService.PendingCount);
         var blockedPluginIds = services.PluginHealth.GetBlockedPluginIds();
@@ -178,7 +177,6 @@ internal static partial class RuntimeInitializationExtensions
             services.ToolSandbox,
             interceptors);
         runtimeForLoadSkill = agentRuntime;
-
         if (agentRuntime is AgentRuntime concreteRuntime)
         {
             services.CommandProcessor.SetCompactCallback(async (session, ct) =>
@@ -187,6 +185,8 @@ internal static partial class RuntimeInitializationExtensions
                 return session.History.Count;
             });
         }
+
+        WireLoopCommandCallback(app, services);
 
         var middlewarePipeline = CreateMiddlewarePipeline(config, loggerFactory, services.ContractGovernance, services.SessionManager);
         var skillWatcher = new SkillWatcherService(

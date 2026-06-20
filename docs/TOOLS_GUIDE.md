@@ -2,7 +2,7 @@
 
 This guide provides a comprehensive overview of the native tools available in OpenClaw.NET and how to configure them securely.
 
-> **Total tools: 75** (native C# `ITool` / `IToolWithContext` implementations across `Agent`, `Core`, `Gateway`, `Protocols`, `Plugins`, and `SemanticKernelAdapter`). Updated 2026-06-20.
+> **Total tools: 84** (native C# `ITool` / `IToolWithContext` implementations across `Agent`, `Core`, `Gateway`, `Protocols`, `Plugins`, and `SemanticKernelAdapter`). Updated 2026-06-20.
 
 ---
 
@@ -39,27 +39,27 @@ There are two primary ways to add new capabilities to your agent:
 
 ## 📊 Tool Inventory (75 tools, as of 2026-06-20)
 
-| Category | Count | Tools |
-|----------|-------|-------|
-| File & Shell | 4 | `shell`, `read_file`, `write_file`, `edit_file` |
-| Memory | 4 | `memory`, `memory_search`, `memory_get`, `project_memory` |
-| Web & Search | 4 | `browser`, `web_search`, `web_fetch`, `x_search` |
-| Code & Execution | 4 | `code_exec`, `git`, `apply_patch`, `pdf_read` |
-| Communication | 3 | `email`, `message`, `inbox_zero` |
-| Database & Notion | 3 | `database`, `notion`, `notion_write` |
-| Home Automation | 4 | `home_assistant`, `home_assistant_write`, `mqtt`, `mqtt_publish` |
-| Calendar & Image | 2 | `calendar`, `image_gen` |
-| Sessions & Delegation | 3 | `sessions`, `delegate_agent`, `process` |
-| Canvas & A2UI | 11 | `canvas_present`, `canvas_hide`, `canvas_navigate`, `canvas_snapshot`, `a2ui_push`, `a2ui_reset`, `a2ui_eval`, `a2ui_create_surface`, `a2ui_update_components`, `a2ui_update_data_model`, `a2ui_delete_surface` |
-| Gateway & Admin | 13 | `automation`, `cron`, `gateway`, `agents_list`, `profile_read`, `profile_write`, `session_search`, `sessions_history`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `session_status`, `todo` |
-| Goal & Loop | 4 | `get_goal`, `create_goal`, `update_goal`, `loop_control` |
-| FractalMemory | 7 | `fractal_memory_search`, `fractal_memory_open`, `fractal_memory_recent`, `fractal_memory_export`, `fractal_memory_validate`, `fractal_memory_handoff_create`, `fractal_memory_index_refresh` |
-| MetaSkill | 7 | `emit_text`, `meta_skill_fill_slots`, `meta_skill_assemble`, `meta_skill_lint_run`, `meta_skill_smoke_run`, `meta_skill_runtime_e2e_run`, `meta_skill_persist_proposal` |
-| Skills | 3 | `load_skill`, `read_skill_resource`, `meta_invoke` |
-| External & MCP | 2 | `external_cli`, `mcp_native` (dynamic) |
-| Semantic Kernel | 2 | `semantic_kernel_entrypoint`, `semantic_kernel_function` |
-| Payment & Mempalace | 2 | `payment`, `mempalace_knowledge_graph` |
-| Streaming & Test | 2 | `streaming_smoke_echo`, `bridged_plugin` (dynamic) |
+| Category | Tools |
+|----------|-------|
+| File & Shell | `shell`, `read_file`, `write_file`, `edit_file` |
+| Memory | `memory`, `memory_search`, `memory_get`, `project_memory` |
+| Web & Search | `browser`, `web_search`, `web_fetch`, `x_search` |
+| Code & Execution | `code_exec`, `git`, `apply_patch`, `pdf_read` |
+| Communication | `email`, `message`, `inbox_zero` |
+| Database & Notion | `database`, `notion`, `notion_write` |
+| Home Automation | `home_assistant`, `home_assistant_write`, `mqtt`, `mqtt_publish` |
+| Calendar & Image | `calendar`, `image_gen` |
+| Sessions & Delegation | `sessions`, `delegate_agent`, `process` |
+| Canvas & A2UI | `canvas_present`, `canvas_hide`, `canvas_navigate`, `canvas_snapshot`, `a2ui_push`, `a2ui_reset`, `a2ui_eval`, `a2ui_create_surface`, `a2ui_update_components`, `a2ui_update_data_model`, `a2ui_delete_surface` |
+| Gateway & Admin | `automation`, `cron`, `gateway`, `agents_list`, `profile_read`, `profile_write`, `session_search`, `sessions_history`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `session_status`, `todo` |
+| Goal & Loop | `get_goal`, `create_goal`, `update_goal`, `loop_control` |
+| FractalMemory | `fractal_memory_search`, `fractal_memory_open`, `fractal_memory_recent`, `fractal_memory_export`, `fractal_memory_validate`, `fractal_memory_handoff_create`, `fractal_memory_index_refresh` |
+| MetaSkill | `emit_text`, `meta_skill_fill_slots`, `meta_skill_assemble`, `meta_skill_lint_run`, `meta_skill_smoke_run`, `meta_skill_runtime_e2e_run`, `meta_skill_persist_proposal` |
+| Skills | `load_skill`, `read_skill_resource`, `meta_invoke` |
+| External & MCP | `external_cli`, `mcp_native` (dynamic) |
+| Semantic Kernel | `semantic_kernel_entrypoint`, `semantic_kernel_function` |
+| Payment & Mempalace | `payment`, `mempalace_knowledge_graph` |
+| Streaming & Test | `streaming_smoke_echo`, `bridged_plugin` (dynamic) |
 
 ---
 

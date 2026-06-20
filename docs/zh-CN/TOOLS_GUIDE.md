@@ -38,27 +38,27 @@
 
 ## 📊 工具清单（75 个工具，截至 2026-06-20）
 
-| 类别 | 数量 | 工具 |
-|----------|-------|-------|
-| 文件与 Shell | 4 | `shell`、`read_file`、`write_file`、`edit_file` |
-| 记忆 | 4 | `memory`、`memory_search`、`memory_get`、`project_memory` |
-| 网页与搜索 | 4 | `browser`、`web_search`、`web_fetch`、`x_search` |
-| 代码与执行 | 4 | `code_exec`、`git`、`apply_patch`、`pdf_read` |
-| 通讯 | 3 | `email`、`message`、`inbox_zero` |
-| 数据库与 Notion | 3 | `database`、`notion`、`notion_write` |
-| 家庭自动化 | 4 | `home_assistant`、`home_assistant_write`、`mqtt`、`mqtt_publish` |
-| 日历与图像 | 2 | `calendar`、`image_gen` |
-| 会话与委托 | 3 | `sessions`、`delegate_agent`、`process` |
-| Canvas 与 A2UI | 11 | `canvas_present`、`canvas_hide`、`canvas_navigate`、`canvas_snapshot`、`a2ui_push`、`a2ui_reset`、`a2ui_eval`、`a2ui_create_surface`、`a2ui_update_components`、`a2ui_update_data_model`、`a2ui_delete_surface` |
-| Gateway 与管理 | 13 | `automation`、`cron`、`gateway`、`agents_list`、`profile_read`、`profile_write`、`session_search`、`sessions_history`、`sessions_send`、`sessions_spawn`、`sessions_yield`、`session_status`、`todo` |
-| Goal 与 Loop | 4 | `get_goal`、`create_goal`、`update_goal`、`loop_control` |
-| 分形记忆 | 7 | `fractal_memory_search`、`fractal_memory_open`、`fractal_memory_recent`、`fractal_memory_export`、`fractal_memory_validate`、`fractal_memory_handoff_create`、`fractal_memory_index_refresh` |
-| 元技能 | 7 | `emit_text`、`meta_skill_fill_slots`、`meta_skill_assemble`、`meta_skill_lint_run`、`meta_skill_smoke_run`、`meta_skill_runtime_e2e_run`、`meta_skill_persist_proposal` |
-| 技能 | 3 | `load_skill`、`read_skill_resource`、`meta_invoke` |
-| 外部与 MCP | 2 | `external_cli`、`mcp_native`（动态） |
-| Semantic Kernel | 2 | `semantic_kernel_entrypoint`、`semantic_kernel_function` |
-| 支付与 Mempalace | 2 | `payment`、`mempalace_knowledge_graph` |
-| 流式与测试 | 2 | `streaming_smoke_echo`、`bridged_plugin`（动态） |
+| 类别 | 工具 |
+|----------|-------|
+| 文件与 Shell | `shell`、`read_file`、`write_file`、`edit_file` |
+| 记忆 | `memory`、`memory_search`、`memory_get`、`project_memory` |
+| 网页与搜索 | `browser`、`web_search`、`web_fetch`、`x_search` |
+| 代码与执行 | `code_exec`、`git`、`apply_patch`、`pdf_read` |
+| 通讯 | `email`、`message`、`inbox_zero` |
+| 数据库与 Notion | `database`、`notion`、`notion_write` |
+| 家庭自动化 | `home_assistant`、`home_assistant_write`、`mqtt`、`mqtt_publish` |
+| 日历与图像 | `calendar`、`image_gen` |
+| 会话与委托 | `sessions`、`delegate_agent`、`process` |
+| Canvas 与 A2UI | `canvas_present`、`canvas_hide`、`canvas_navigate`、`canvas_snapshot`、`a2ui_push`、`a2ui_reset`、`a2ui_eval`、`a2ui_create_surface`、`a2ui_update_components`、`a2ui_update_data_model`、`a2ui_delete_surface` |
+| Gateway 与管理 | `automation`、`cron`、`gateway`、`agents_list`、`profile_read`、`profile_write`、`session_search`、`sessions_history`、`sessions_send`、`sessions_spawn`、`sessions_yield`、`session_status`、`todo` |
+| Goal 与 Loop | `get_goal`、`create_goal`、`update_goal`、`loop_control` |
+| 分形记忆 | `fractal_memory_search`、`fractal_memory_open`、`fractal_memory_recent`、`fractal_memory_export`、`fractal_memory_validate`、`fractal_memory_handoff_create`、`fractal_memory_index_refresh` |
+| 元技能 | `emit_text`、`meta_skill_fill_slots`、`meta_skill_assemble`、`meta_skill_lint_run`、`meta_skill_smoke_run`、`meta_skill_runtime_e2e_run`、`meta_skill_persist_proposal` |
+| 技能 | `load_skill`、`read_skill_resource`、`meta_invoke` |
+| 外部与 MCP | `external_cli`、`mcp_native`（动态） |
+| Semantic Kernel | `semantic_kernel_entrypoint`、`semantic_kernel_function` |
+| 支付与 Mempalace | `payment`、`mempalace_knowledge_graph` |
+| 流式与测试 | `streaming_smoke_echo`、`bridged_plugin`（动态） |
 
 ---
 

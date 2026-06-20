@@ -37,7 +37,7 @@ There are two primary ways to add new capabilities to your agent:
 
 ---
 
-## 📊 Tool Inventory (75 tools, as of 2026-06-20)
+## 📊 Tool Inventory (84 tools, as of 2026-06-20)
 
 | Category | Tools |
 |----------|-------|

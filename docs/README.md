@@ -24,8 +24,8 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | --- | --- |
 | [USER_GUIDE.md](USER_GUIDE.md) | Providers, tools, skills, channels, and the day-to-day operator surface. |
 | [RELEASES.md](RELEASES.md) | Desktop download bundles, release assets, and signing/notarization status. |
-| [TOOLS_GUIDE.md](TOOLS_GUIDE.md) | Native tool catalog, behavior, and configuration (75 tools). |
-| [zh-CN/TOOLS_GUIDE.md](zh-CN/TOOLS_GUIDE.md) | 原生工具目录与配置（简体中文，75 个工具）。 |
+| [TOOLS_GUIDE.md](TOOLS_GUIDE.md) | Native tool catalog, behavior, and configuration (84 tools). |
+| [zh-CN/TOOLS_GUIDE.md](zh-CN/TOOLS_GUIDE.md) | 原生工具目录与配置（简体中文，84 个工具）。 |
 | [zh-CN/LOOP_TECHNICAL_ARCHITECTURE.md](zh-CN/LOOP_TECHNICAL_ARCHITECTURE.md) | /loop 定时循环命令技术架构（简体中文）。 |
 | [zh-CN/GOAL_TECHNICAL_ARCHITECTURE.md](zh-CN/GOAL_TECHNICAL_ARCHITECTURE.md) | Goal 目标机制技术架构（简体中文）。 |
 | [SKILLKIT.md](SKILLKIT.md) | Local-first `openclaw skill` workflows for defining, validating, critiquing, packaging, and dry-running reusable OpenClaw skills. |

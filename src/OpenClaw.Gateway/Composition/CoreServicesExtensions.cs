@@ -227,6 +227,7 @@ internal static class CoreServicesExtensions
         services.AddSingleton<ClawLoopScheduler>();
         services.AddSingleton<ILoopControlService>(sp => sp.GetRequiredService<ClawLoopScheduler>());
         services.AddSingleton<LoopTerminationDetector>();
+        services.AddSingleton<IAgentLoopDispatcher, GatewayAgentLoopDispatcher>();
         services.AddSingleton<AgentLoopJob>();
         services.AddSingleton<AutomationRunCoordinator>();
         services.AddSingleton<IAutomationRunDispatcher>(sp => sp.GetRequiredService<AutomationRunCoordinator>());

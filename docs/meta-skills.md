@@ -128,12 +128,13 @@ and executes children in controlled parallel batches. Shared logic lives in
   iterable: "{{ outputs.extract | from_json }}"
   fan_out_max_concurrency: 3
   fan_out_merge_mode: json_array
+  with:
+    continue_on_error: true
   fan_out_template:
     kind: tool_call
     tool: web_search
     with:
       query: "{{ item }}"
-    continue_on_error: true
 ```
 
 ### Runtime Tool Discovery (`list_tools`)

@@ -1449,6 +1449,19 @@ public static class SkillLoader
                     errorCode = "invalid_step_kind_fields";
                     return false;
                 }
+
+                var normalizedTemplateKind = step.FanOutTemplate.Kind.Trim().ToLowerInvariant();
+                if (normalizedTemplateKind != "tool_call" && normalizedTemplateKind != "llm_chat")
+                {
+                    errorCode = "invalid_step_kind_fields";
+                    return false;
+                }
+
+                if (normalizedTemplateKind == "tool_call" && string.IsNullOrWhiteSpace(step.FanOutTemplate.Tool))
+                {
+                    errorCode = "invalid_step_kind_fields";
+                    return false;
+                }
             }
         }
 
@@ -2123,7 +2136,10 @@ public static class SkillLoader
 
         int? timeoutSeconds = null;
         if (templateElement.TryGetProperty("timeout_seconds", out var ts) && ts.ValueKind == JsonValueKind.Number)
-            timeoutSeconds = ts.GetInt32();
+        {
+            if (ts.TryGetInt32(out var parsed) && parsed > 0)
+                timeoutSeconds = parsed;
+        }
 
         return new MetaSkillStepDefinition
         {

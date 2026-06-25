@@ -102,7 +102,7 @@ SKILL.md (YAML frontmatter)
 `TryValidateMetaPlan` 执行以下校验（位于 `AgentRuntime.cs`）：
 
 1. **唯一 ID**：每个步骤的 `Id` 必须在计划内唯一
-2. **Kind 有效性**：`Kind` 必须为六种支持类型之一
+2. **Kind 有效性**：`Kind` 必须为七种支持类型之一
 3. **Skill 引用**：`agent` / `skill_exec` 类型的步骤必须声明 `skill` 且引用的 Skill 存在
 4. **依赖引用**：`depends_on` 中的每个 ID 必须引用计划内的其他步骤
 5. **无环校验**：检测 DAG 中的循环依赖（拓扑排序实现）
@@ -137,7 +137,7 @@ if (!TryValidateMetaPlan(steps, LoadedSkills, out var validationError))
 
 ## 步骤执行类型
 
-编排器根据 `Kind` 分发到六种不同的执行路径。每种类型的执行成本、工具访问能力和行为契约各不相同。这种设计允许计划编写者为每个步骤选择最低成本的执行器，而非默认为完整子 Agent。
+编排器根据 `Kind` 分发到七种不同的执行路径。每种类型的执行成本、工具访问能力和行为契约各不相同。这种设计允许计划编写者为每个步骤选择最低成本的执行器，而非默认为完整子 Agent。
 
 | Kind | 执行方法 | 工具访问 | LLM 调用 | 成本 | 适用场景 |
 | --- | --- | --- | --- | --- | --- |

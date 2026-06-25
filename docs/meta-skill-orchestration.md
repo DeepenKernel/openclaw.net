@@ -119,7 +119,7 @@ SKILL.md (YAML frontmatter)
 `TryValidateMetaPlan` performs the following checks (located in `AgentRuntime.cs`):
 
 1. **Unique IDs**: Every step's `Id` must be unique within the plan
-2. **Kind validity**: `Kind` must be one of the six supported types
+2. **Kind validity**: `Kind` must be one of the seven supported types
 3. **Skill references**: `agent` / `skill_exec` steps must declare `skill` and the referenced skill must exist
 4. **Dependency references**: Every ID in `depends_on` must reference another step in the plan
 5. **Acyclicity check**: Detects cycles in the DAG (topological sort implementation)
@@ -156,7 +156,7 @@ Template-accessible context variables:
 
 ## Step Execution Kinds
 
-The orchestrator dispatches to six distinct execution paths based on `Kind`. Each
+The orchestrator dispatches to seven distinct execution paths based on `Kind`. Each
 kind has different execution cost, tool access, and behavioral contracts. This
 design lets plan authors select the minimum-cost executor for each step rather
 than defaulting to a full sub-agent for everything.

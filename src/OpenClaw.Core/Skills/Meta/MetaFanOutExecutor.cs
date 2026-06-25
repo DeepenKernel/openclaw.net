@@ -18,6 +18,7 @@ public static class MetaFanOutExecutor
     /// Executes a single fan_out child step.  Returns (output, failureCode).
     /// </summary>
     public delegate Task<(string Output, string? FailureCode)> FanOutChildExecutor(
+        SkillDefinition metaSkill,
         MetaSkillStepDefinition template,
         string childId,
         string childInput,
@@ -107,7 +108,7 @@ public static class MetaFanOutExecutor
         if (items.Count == 0)
         {
             CompleteMetaStepOutput(fanOutStep, fanOutStep.FanOutMergeMode == "json_array" ? "[]" : "", pending, outputs, failureAliases);
-            routePlanner.ApplyCompletionRouting(fanOutStep, metaContext, stepById, blocked, pending, dependentsByStep);
+            routePlanner.ApplyCompletionRouting(fanOutStep, new MetaExecutionContext(input, outputs), stepById, blocked, pending, dependentsByStep);
             stepResults.Add(new MetaStepExecutionResult(fanOutStep.Id, fanOutStep.Kind, ToolResultStatuses.Completed, null, 0, Continued: false));
             return true;
         }
@@ -115,7 +116,7 @@ public static class MetaFanOutExecutor
         // 2. Clone template for each item.
         var template = fanOutStep.FanOutTemplate!;
         var childOutputs = new Dictionary<string, string>(items.Count);
-        var maxConcurrency = Math.Max(1, fanOutStep.FanOutMaxConcurrency);
+        var maxConcurrency = fanOutStep.FanOutMaxConcurrency == 0 ? items.Count : Math.Max(1, fanOutStep.FanOutMaxConcurrency);
 
         var fanSw = Stopwatch.StartNew();
 
@@ -139,7 +140,7 @@ public static class MetaFanOutExecutor
                     {
                         var childContext = new MetaExecutionContext(childInput, outputs);
                         var (childOutput, failureCode) = await childExecutor(
-                            template, childId, childInput, childContext,
+                            metaSkill, template, childId, childInput, childContext,
                             session, turnCtx, ct);
                         childSw.Stop();
                         if (failureCode is not null)
@@ -172,7 +173,29 @@ public static class MetaFanOutExecutor
 
         fanSw.Stop();
 
-        // 3. Merge outputs.
+        // 3. Check for child failures when continue_on_error is disabled.
+        var anyChildFailed = false;
+        if (!continueOnError)
+        {
+            foreach (var (id, _, status, _, _, _, _) in stepResults)
+            {
+                if (id.StartsWith(fanOutStep.Id + "_", StringComparison.Ordinal) &&
+                    string.Equals(status, ToolResultStatuses.Failed, StringComparison.Ordinal))
+                {
+                    anyChildFailed = true;
+                    break;
+                }
+            }
+        }
+
+        if (anyChildFailed)
+        {
+            pending.Remove(fanOutStep.Id);
+            stepResults.Add(new MetaStepExecutionResult(fanOutStep.Id, fanOutStep.Kind, ToolResultStatuses.Failed, "child_step_failed", fanSw.Elapsed.TotalMilliseconds, Continued: false));
+            return true;
+        }
+
+        // 4. Merge outputs.
         var mergedOutput = fanOutStep.FanOutMergeMode switch
         {
             "json_array" => System.Text.Json.JsonSerializer.Serialize(childOutputs.Values.ToList(), CoreJsonContext.Default.ListString),

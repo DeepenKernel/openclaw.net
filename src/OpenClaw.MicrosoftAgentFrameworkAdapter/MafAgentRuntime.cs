@@ -1898,6 +1898,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
     }
 
     private async Task<(string Output, string? FailureCode)> ExecuteFanOutChildAsync(
+        SkillDefinition metaSkill,
         MetaSkillStepDefinition template,
         string childId,
         string childInput,
@@ -1910,7 +1911,16 @@ public sealed class MafAgentRuntime : IAgentRuntime
         {
             case "tool_call":
             {
-                var toolName = template.Tool!;
+                var toolName = template.Tool;
+                if (string.IsNullOrWhiteSpace(toolName))
+                    return ($"Error: fan-out child step '{childId}' is 'tool_call' but does not declare a tool.", "missing_tool");
+
+                if (template.ToolAllowlist.Count > 0 && !template.ToolAllowlist.Contains(toolName, StringComparer.OrdinalIgnoreCase))
+                    return ($"Error: tool '{toolName}' is not allowlisted for fan-out child step '{childId}'.", "tool_not_allowlisted");
+
+                if (!IsToolAllowedByMetaCapabilities(metaSkill, toolName))
+                    return ($"Error: tool '{toolName}' is not permitted by metadata capabilities for fan-out child step '{childId}'.", "metadata_capability_denied");
+
                 string toolArgsJson;
                 try
                 {
@@ -1923,7 +1933,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 }
 
                 var result = await ExecuteMetaToolStepWithPolicyAsync(
-                    metaSkill: null!,
+                    metaSkill,
                     new MetaSkillStepDefinition { Id = childId, Kind = template.Kind, Retry = template.Retry, TimeoutSeconds = template.TimeoutSeconds },
                     toolName,
                     toolArgsJson,
@@ -1932,7 +1942,10 @@ public sealed class MafAgentRuntime : IAgentRuntime
                     ct);
 
                 var completed = string.Equals(result.ResultStatus, ToolResultStatuses.Completed, StringComparison.Ordinal);
-                return completed ? (result.ResultText, null) : (result.ResultText, result.FailureCode);
+                var failureCode = result.FailureCode;
+                if (completed && !TryValidateMetaStepOutput(template, result.ResultText, out failureCode))
+                    completed = false;
+                return completed ? (result.ResultText, null) : (result.ResultText, failureCode);
             }
 
             case "llm_chat":

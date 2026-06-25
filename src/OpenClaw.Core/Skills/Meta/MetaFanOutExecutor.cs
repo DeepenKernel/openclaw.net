@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using OpenClaw.Core.Models;
@@ -54,27 +55,11 @@ public static class MetaFanOutExecutor
         CancellationToken ct)
     {
         // Find the first ready fan_out step.
-        MetaSkillStepDefinition? fanOutStep = null;
-        foreach (var step in steps)
-        {
-            if (!pending.Contains(step.Id) || blocked.Contains(step.Id))
-                continue;
-
-            if (!string.Equals(NormalizeMetaStepKind(step.Kind), "fan_out", StringComparison.Ordinal))
-                continue;
-
-            var waiting = false;
-            foreach (var dep in step.DependsOn)
-            {
-                if (blocked.Contains(dep)) { waiting = true; break; }
-                if (!outputs.ContainsKey(dep)) { waiting = true; break; }
-            }
-
-            if (waiting) continue;
-
-            fanOutStep = step;
-            break;
-        }
+        var fanOutStep = steps.FirstOrDefault(step =>
+            pending.Contains(step.Id) &&
+            !blocked.Contains(step.Id) &&
+            string.Equals(NormalizeMetaStepKind(step.Kind), "fan_out", StringComparison.Ordinal) &&
+            step.DependsOn.All(dep => !blocked.Contains(dep) && outputs.ContainsKey(dep)));
 
         if (fanOutStep is null)
             return false;
@@ -154,10 +139,22 @@ public static class MetaFanOutExecutor
                     {
                         throw;
                     }
-                    catch (Exception ex)
+                    catch (JsonException ex)
                     {
                         childSw.Stop();
-                        logger?.Invoke($"Fan-out child step '{childId}' threw unhandled exception", ex);
+                        logger?.Invoke($"Fan-out child step '{childId}' threw JsonException", ex);
+                        return (childId, ex.Message, ToolResultStatuses.Failed, (string?)"child_step_failed", childSw.Elapsed.TotalMilliseconds);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        childSw.Stop();
+                        logger?.Invoke($"Fan-out child step '{childId}' threw InvalidOperationException", ex);
+                        return (childId, ex.Message, ToolResultStatuses.Failed, (string?)"child_step_failed", childSw.Elapsed.TotalMilliseconds);
+                    }
+                    catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+                    {
+                        childSw.Stop();
+                        logger?.Invoke($"Fan-out child step '{childId}' threw TaskCanceledException (external)", ex);
                         return (childId, ex.Message, ToolResultStatuses.Failed, (string?)"child_step_failed", childSw.Elapsed.TotalMilliseconds);
                     }
                 }, ct));
@@ -260,7 +257,10 @@ public static class MetaFanOutExecutor
             if (parsed is not null)
                 return new Dictionary<string, object?>(parsed, StringComparer.OrdinalIgnoreCase);
         }
-        catch (JsonException) { }
+        catch (JsonException ex)
+        {
+            Debug.WriteLine($"DeserializeStepArgs: {ex.GetType().Name} — {ex.Message}");
+        }
         return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
     }
 

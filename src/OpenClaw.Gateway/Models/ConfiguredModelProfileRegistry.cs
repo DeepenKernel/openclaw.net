@@ -26,6 +26,7 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry, ID
     private readonly ILogger<ConfiguredModelProfileRegistry> _logger;
     private readonly LlmProviderRegistry? _providerRegistry;
     private readonly IVideoFrameExtractionService? _videoFrameExtraction;
+    private GatewayConfig _config;
 
     public ConfiguredModelProfileRegistry(GatewayConfig config, ILogger<ConfiguredModelProfileRegistry> logger)
         : this(config, logger, null)
@@ -38,13 +39,18 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry, ID
         LlmProviderRegistry? providerRegistry,
         IVideoFrameExtractionService? videoFrameExtraction = null)
     {
+        _config = config;
         _logger = logger;
         _providerRegistry = providerRegistry;
         _videoFrameExtraction = videoFrameExtraction;
-        DefaultProfileId = BuildRegistrations(config);
     }
 
-    public string? DefaultProfileId { get; }
+    public string? DefaultProfileId { get; private set; }
+
+    public void SetDefaultProfileId()
+    {
+        DefaultProfileId = BuildRegistrations(_config);
+    }
 
     public bool TryGet(string profileId, out ModelProfile? profile)
     {

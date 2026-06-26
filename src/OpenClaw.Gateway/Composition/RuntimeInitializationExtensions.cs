@@ -111,6 +111,8 @@ internal static partial class RuntimeInitializationExtensions
                 "Register it as the built-in provider or via a compatible plugin.");
         }
 
+        services.ModelProfiles.SetDefaultProfileId();
+
         var chatClient = services.ProviderRegistry.TryGet("default", out var defaultRegistration) && defaultRegistration is not null
             ? defaultRegistration.Client
             : LlmClientFactory.CreateChatClient(config.Llm, config.LocalInference, config.Multimodal, videoFrameExtraction);

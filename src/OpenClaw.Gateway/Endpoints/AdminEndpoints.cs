@@ -90,6 +90,7 @@ internal static partial class AdminEndpoints
         var modelEvaluationRunner = app.Services.GetService<ModelEvaluationRunner>()
             ?? new ModelEvaluationRunner(
                 runtime.Operations.ModelProfiles as ConfiguredModelProfileRegistry
+                    ?? modelProfiles as ConfiguredModelProfileRegistry
                     ?? ConfiguredModelProfileRegistry.CreateInitialized(startup.Config),
                 startup.Config,
                 NullLogger<ModelEvaluationRunner>.Instance);

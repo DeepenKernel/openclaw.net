@@ -27,7 +27,7 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry, ID
     private readonly ILogger<ConfiguredModelProfileRegistry> _logger;
     private readonly LlmProviderRegistry? _providerRegistry;
     private readonly IVideoFrameExtractionService? _videoFrameExtraction;
-    private GatewayConfig _config;
+    private readonly GatewayConfig _config;
 
     public ConfiguredModelProfileRegistry(GatewayConfig config, ILogger<ConfiguredModelProfileRegistry> logger)
         : this(config, logger, null)

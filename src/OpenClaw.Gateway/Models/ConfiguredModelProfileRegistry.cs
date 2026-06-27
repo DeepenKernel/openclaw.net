@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Security;
@@ -26,6 +27,7 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry, ID
     private readonly ILogger<ConfiguredModelProfileRegistry> _logger;
     private readonly LlmProviderRegistry? _providerRegistry;
     private readonly IVideoFrameExtractionService? _videoFrameExtraction;
+    private readonly GatewayConfig _config;
 
     public ConfiguredModelProfileRegistry(GatewayConfig config, ILogger<ConfiguredModelProfileRegistry> logger)
         : this(config, logger, null)
@@ -38,13 +40,27 @@ internal sealed class ConfiguredModelProfileRegistry : IModelProfileRegistry, ID
         LlmProviderRegistry? providerRegistry,
         IVideoFrameExtractionService? videoFrameExtraction = null)
     {
+        _config = config;
         _logger = logger;
         _providerRegistry = providerRegistry;
         _videoFrameExtraction = videoFrameExtraction;
-        DefaultProfileId = BuildRegistrations(config);
     }
 
-    public string? DefaultProfileId { get; }
+    public string? DefaultProfileId { get; private set; }
+
+    internal static ConfiguredModelProfileRegistry CreateInitialized(GatewayConfig config)
+    {
+        var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
+        return registry;
+    }
+
+    public void SetDefaultProfileId()
+    {
+        if (DefaultProfileId is not null)
+            return;
+        DefaultProfileId = BuildRegistrations(_config);
+    }
 
     public bool TryGet(string profileId, out ModelProfile? profile)
     {

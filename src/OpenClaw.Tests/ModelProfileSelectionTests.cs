@@ -33,6 +33,7 @@ public sealed class ModelProfileSelectionTests
         };
 
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var statuses = registry.ListStatuses();
 
         var profile = Assert.Single(statuses);
@@ -51,6 +52,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var session = new Session
         {
@@ -95,6 +97,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var session = new Session
         {
@@ -123,6 +126,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
 
         var selection = policy.Resolve(new OpenClaw.Core.Abstractions.ModelSelectionRequest
@@ -154,6 +158,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildEmbeddedVideoConfig(videoEnabled: false);
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
 
         var selection = policy.Resolve(new OpenClaw.Core.Abstractions.ModelSelectionRequest
@@ -186,6 +191,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var session = new Session
         {
@@ -218,6 +224,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var session = new Session
         {
@@ -249,6 +256,7 @@ public sealed class ModelProfileSelectionTests
 
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var session = new Session
         {
@@ -448,6 +456,7 @@ public sealed class ModelProfileSelectionTests
             };
 
             var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+            registry.SetDefaultProfileId();
             Assert.True(registry.TryGet("gemma4-prod", out var profile));
             Assert.NotNull(profile);
             Assert.Equal("https://example.invalid/v1", profile!.BaseUrl);
@@ -504,6 +513,7 @@ public sealed class ModelProfileSelectionTests
         };
 
         using var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var embedded = registry.ListStatuses().Single(status => status.Id == "embedded-local");
         Assert.True(embedded.Capabilities.SupportsStreaming);
         Assert.True(embedded.Capabilities.SupportsSystemMessages);
@@ -570,6 +580,7 @@ public sealed class ModelProfileSelectionTests
         };
 
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var doctor = ModelDoctorEvaluator.Build(config, registry);
         var profile = Assert.Single(doctor.Profiles);
 
@@ -608,6 +619,7 @@ public sealed class ModelProfileSelectionTests
         };
 
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var status = Assert.Single(registry.ListStatuses());
 
         Assert.True(status.IsAvailable);
@@ -660,6 +672,7 @@ public sealed class ModelProfileSelectionTests
         };
 
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var selection = policy.Resolve(new OpenClaw.Core.Abstractions.ModelSelectionRequest
         {
@@ -761,6 +774,7 @@ public sealed class ModelProfileSelectionTests
         };
 
         using var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var statuses = registry.ListStatuses();
 
         Assert.Contains(statuses, status => status.Id == "default" && status.IsAvailable);
@@ -779,6 +793,7 @@ public sealed class ModelProfileSelectionTests
         Directory.CreateDirectory(storagePath);
         var config = BuildProfileConfig();
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var policy = new DefaultModelSelectionPolicy(registry);
         var service = new GatewayLlmExecutionService(
             config,
@@ -873,6 +888,7 @@ public sealed class ModelProfileSelectionTests
         var config = BuildProfileConfig();
         config.Memory.StoragePath = storagePath;
         var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
         var runner = new ModelEvaluationRunner(registry, config, NullLogger<ModelEvaluationRunner>.Instance);
 
         var report = await runner.RunAsync(new ModelEvaluationRequest

@@ -898,6 +898,7 @@ internal sealed class GatewayLlmExecutionService : ILlmExecutionService
     private static CompatibilityServices CreateCompatibilityServices(GatewayConfig config, LlmProviderRegistry registry)
     {
         var modelProfiles = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance, registry);
+        modelProfiles.SetDefaultProfileId();
         return new CompatibilityServices
         {
             Registry = modelProfiles,

@@ -7601,9 +7601,7 @@ public sealed class GatewayAdminEndpointTests
             PluginReports = Array.Empty<PluginLoadReport>(),
             Operations = new RuntimeOperationsState
             {
-                ModelProfiles = new ConfiguredModelProfileRegistry(
-                    config,
-                    NullLogger<ConfiguredModelProfileRegistry>.Instance),
+                ModelProfiles = CreateModelProfiles(config),
                 ProviderPolicies = providerPolicies,
                 ProviderRegistry = providerRegistry,
                 LlmExecution = llmExecution,
@@ -7630,6 +7628,15 @@ public sealed class GatewayAdminEndpointTests
             RegisteredToolNames = System.Collections.Frozen.FrozenSet<string>.Empty,
             ChannelAuthEvents = new ChannelAuthEventStore()
         };
+    }
+
+    private static ConfiguredModelProfileRegistry CreateModelProfiles(GatewayConfig config)
+    {
+        var registry = new ConfiguredModelProfileRegistry(
+            config,
+            NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        registry.SetDefaultProfileId();
+        return registry;
     }
 
     private sealed record GatewayTestHarness(

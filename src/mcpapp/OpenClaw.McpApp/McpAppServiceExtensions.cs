@@ -46,7 +46,8 @@ public sealed class McpAppRegistry : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly List<McpAppServer> _servers = [];
     private readonly List<Shared.IMcpAppInfoProvider> _apps = [];
-    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly object _gate = new();
+    private readonly SemaphoreSlim _loadLock = new(1, 1);
     private bool _loaded;
     private bool _disposed;
 
@@ -65,7 +66,7 @@ public sealed class McpAppRegistry : IAsyncDisposable
     {
         get
         {
-            lock (_lock)
+            lock (_gate)
                 return _apps.ToList();
         }
     }
@@ -77,13 +78,16 @@ public sealed class McpAppRegistry : IAsyncDisposable
     /// </summary>
     public async Task LoadAllAsync(CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        await _loadLock.WaitAsync(ct);
         try
         {
-            ThrowIfDisposed();
+            lock (_gate)
+            {
+                ThrowIfDisposed();
 
-            if (_loaded)
-                return;
+                if (_loaded)
+                    return;
+            }
 
             var states = _discovery.Discover(ct);
             _logger.LogInformation("MCP App discovery found {Count} candidate(s)", states.Count);
@@ -102,17 +106,23 @@ public sealed class McpAppRegistry : IAsyncDisposable
                     continue;
                 }
 
+                McpAppServer? server = null;
                 try
                 {
                     _config.Entries.TryGetValue(state.Manifest.Id, out var entryConfig);
-                    var server = new McpAppServer(
+                    server = new McpAppServer(
                         state,
                         entryConfig,
                         _loggerFactory.CreateLogger<McpAppServer>());
 
                     var infoProvider = await server.ConnectAsync(ct);
-                    _servers.Add(server);
-                    _apps.Add(infoProvider);
+                    lock (_gate)
+                    {
+                        ThrowIfDisposed();
+                        _servers.Add(server);
+                        _apps.Add(infoProvider);
+                        server = null;
+                    }
 
                     _logger.LogInformation(
                         "McpApp '{AppId}' loaded: {ToolCount} tools, {ResourceCount} resources",
@@ -122,15 +132,27 @@ public sealed class McpAppRegistry : IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
+                    if (server is not null)
+                    {
+                        try { await server.DisposeAsync(); } catch { }
+                    }
+
+                    if (ct.IsCancellationRequested)
+                        throw;
+
                     _logger.LogError(ex, "Failed to load McpApp '{AppId}'", state.Manifest.Id);
                 }
             }
 
-            _loaded = true;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                _loaded = true;
+            }
         }
         finally
         {
-            _lock.Release();
+            _loadLock.Release();
         }
     }
 
@@ -139,7 +161,7 @@ public sealed class McpAppRegistry : IAsyncDisposable
     /// </summary>
     public Shared.IMcpAppInfoProvider? GetApp(string appId)
     {
-        lock (_lock)
+        lock (_gate)
             return _apps.FirstOrDefault(a => a.AppId == appId);
     }
 
@@ -150,7 +172,7 @@ public sealed class McpAppRegistry : IAsyncDisposable
     {
         get
         {
-            lock (_lock)
+            lock (_gate)
                 return _servers.ToList();
         }
     }
@@ -163,35 +185,37 @@ public sealed class McpAppRegistry : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
-            return;
+        List<McpAppServer> servers = [];
 
-        await _lock.WaitAsync();
+        await _loadLock.WaitAsync();
         try
         {
-            if (_disposed)
-                return;
-
-            _disposed = true;
-
-            foreach (var server in _servers)
+            lock (_gate)
             {
-                try
-                {
-                    await server.DisposeAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Error disposing McpApp server");
-                }
-            }
+                if (_disposed)
+                    return;
 
-            _servers.Clear();
-            _apps.Clear();
+                _disposed = true;
+                servers = _servers.ToList();
+                _servers.Clear();
+                _apps.Clear();
+            }
         }
         finally
         {
-            _lock.Release();
+            _loadLock.Release();
+        }
+
+        foreach (var server in servers)
+        {
+            try
+            {
+                await server.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error disposing McpApp server");
+            }
         }
 
         GC.SuppressFinalize(this);

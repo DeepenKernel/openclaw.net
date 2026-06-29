@@ -9,7 +9,7 @@ namespace OpenClaw.McpApp.Models;
 /// MCP Apps are MCP Servers that may additionally include an interactive UI
 /// (served as a resource with MIME type text/html;profile=mcp-app).
 /// </summary>
-public sealed class McpAppManifest
+public sealed class McpAppManifest : IJsonOnDeserialized
 {
     /// <summary>Canonical app id (e.g. "grocery-inventory").</summary>
     public required string Id { get; init; }
@@ -21,13 +21,13 @@ public sealed class McpAppManifest
     public string? Description { get; init; }
 
     /// <summary>Semantic version.</summary>
-    public string Version { get; init; } = "0.1.0";
+    public string Version { get; set; } = "0.1.0";
 
     /// <summary>Minimum OpenClaw host version required.</summary>
     public string? MinHostVersion { get; init; }
 
     /// <summary>MCP protocol version(s) supported (e.g. "2025-03-26").</summary>
-    public string ProtocolVersion { get; init; } = "2025-03-26";
+    public string ProtocolVersion { get; set; } = "2025-03-26";
 
     /// <summary>Icon URL or relative path for the app.</summary>
     public string? IconUrl { get; init; }
@@ -42,19 +42,19 @@ public sealed class McpAppManifest
     public string? HomepageUrl { get; init; }
 
     /// <summary>Tags for categorization / discovery.</summary>
-    public string[] Tags { get; init; } = [];
+    public string[] Tags { get; set; } = [];
 
     /// <summary>
     /// Transport mode for connecting to the MCP App server.
-    /// "stdio" (launch a process), "http" (connect to a URL), or "inprocess" (host in-process).
+    /// "stdio" (launch a process) or "http" (connect to a URL).
     /// </summary>
-    public string Transport { get; init; } = "stdio";
+    public string Transport { get; set; } = "stdio";
 
     /// <summary>Command to launch (stdio transport).</summary>
     public string? Command { get; init; }
 
     /// <summary>Arguments for the launch command.</summary>
-    public string[] Arguments { get; init; } = [];
+    public string[] Arguments { get; set; } = [];
 
     /// <summary>Working directory for the launched process.</summary>
     public string? WorkingDirectory { get; init; }
@@ -63,10 +63,10 @@ public sealed class McpAppManifest
     public string? Url { get; init; }
 
     /// <summary>HTTP headers for transport authentication.</summary>
-    public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> Headers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Environment variables to set when launching the process.</summary>
-    public Dictionary<string, string> Environment { get; init; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> Environment { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Whether the app includes an MCP App UI bundle (HTML resource
@@ -89,7 +89,7 @@ public sealed class McpAppManifest
     /// <summary>
     /// List of capability strings the app declares (e.g. "tools", "resources", "prompts", "completions").
     /// </summary>
-    public string[] Capabilities { get; init; } = ["tools"];
+    public string[] Capabilities { get; set; } = ["tools"];
 
     /// <summary>Startup timeout in seconds.</summary>
     public int StartupTimeoutSeconds { get; set; } = 15;
@@ -103,7 +103,24 @@ public sealed class McpAppManifest
     /// <summary>
     /// Arbitrary metadata dictionary for extensibility.
     /// </summary>
-    public Dictionary<string, JsonElement> Metadata { get; init; } = new(StringComparer.Ordinal);
+    public Dictionary<string, JsonElement> Metadata { get; set; } = new(StringComparer.Ordinal);
+
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (string.IsNullOrWhiteSpace(Version))
+            Version = "0.1.0";
+        if (string.IsNullOrWhiteSpace(ProtocolVersion))
+            ProtocolVersion = "2025-03-26";
+        if (string.IsNullOrWhiteSpace(Transport))
+            Transport = "stdio";
+
+        Tags ??= [];
+        Arguments ??= [];
+        Headers ??= new(StringComparer.OrdinalIgnoreCase);
+        Environment ??= new(StringComparer.Ordinal);
+        Capabilities = Capabilities is null || Capabilities.Length == 0 ? ["tools"] : Capabilities;
+        Metadata ??= new(StringComparer.Ordinal);
+    }
 }
 
 /// <summary>

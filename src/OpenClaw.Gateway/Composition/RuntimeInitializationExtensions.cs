@@ -77,9 +77,12 @@ internal static partial class RuntimeInitializationExtensions
             startup.RuntimeState);
         if (config.Plugins.Mcp.Enabled)
             await services.McpRegistry.RegisterToolsAsync(services.NativeRegistry, app.Lifetime.ApplicationStopping);
+        await using var mcpAppStartupCleanup = new AsyncStartupCleanupGuard();
         if (config.McpApps.Enabled)
+        {
             await services.McpAppRegistry.RegisterMcpAppToolsAsync(services.NativeRegistry, config.McpApps, app.Lifetime.ApplicationStopping);
-
+            mcpAppStartupCleanup.Register(() => services.McpAppRegistry.DisposeAsync());
+        }
         LlmClientFactory.ResetDynamicProviders();
         var videoFrameExtraction = app.Services.GetRequiredService<IVideoFrameExtractionService>();
         string? builtInInitError = null;
@@ -208,6 +211,7 @@ internal static partial class RuntimeInitializationExtensions
         var shutdownCoordinator = app.Services.GetRequiredService<GatewayRuntimeShutdownCoordinator>();
         shutdownCoordinator.RegisterAsyncCleanup("mcp registry", _ => services.McpRegistry.DisposeAsync());
         shutdownCoordinator.RegisterAsyncCleanup("mcpapp registry", _ => services.McpAppRegistry.DisposeAsync());
+        mcpAppStartupCleanup.Cancel();
         var runtime = CreateGatewayRuntime(
             config,
             services,

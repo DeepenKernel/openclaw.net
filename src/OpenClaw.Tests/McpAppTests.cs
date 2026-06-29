@@ -80,13 +80,9 @@ public sealed class McpAppTests : IAsyncDisposable
         Assert.Equal("0.1.0", manifest.Version);
         Assert.Null(manifest.Name);
         Assert.Null(manifest.Description);
-        // Transport defaults to null in JSON; the ResolveTransport() method
-        // treats null as "stdio" at connection time.
-        Assert.True(manifest.Transport is null or "stdio");
+        Assert.Equal("stdio", manifest.Transport);
         Assert.False(manifest.HasUi);
-        // Capabilities defaults to ["tools"] in the class definition but JSON
-        // deserialization may set it to null when absent; both are acceptable.
-        Assert.True(manifest.Capabilities is null || manifest.Capabilities.Contains("tools"));
+        Assert.Contains("tools", manifest.Capabilities);
     }
 
     [Fact]
@@ -409,11 +405,19 @@ public sealed class McpAppTests : IAsyncDisposable
         {
             WriteManifestFile(app1Dir, new McpAppManifest
             {
-                Id = "app1", Name = "App One", Version = "1.0", Transport = "http", Url = "https://a.example.com/mcp"
+                Id = "app1",
+                Name = "App One",
+                Version = "1.0",
+                Transport = "http",
+                Url = "https://a.example.com/mcp"
             });
             WriteManifestFile(app2Dir, new McpAppManifest
             {
-                Id = "app2", Name = "App Two", Version = "2.0", Transport = "http", Url = "https://b.example.com/mcp"
+                Id = "app2",
+                Name = "App Two",
+                Version = "2.0",
+                Transport = "http",
+                Url = "https://b.example.com/mcp"
             });
 
             var config = new McpAppsConfig
@@ -495,6 +499,38 @@ public sealed class McpAppTests : IAsyncDisposable
             Assert.False(results[0].IsValid);
             Assert.Contains(results[0].ValidationErrors,
                 e => e.Contains("transport", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            TryDeleteDirectory(dir);
+        }
+    }
+
+    [Fact]
+    public void Discovery_InProcessTransport_ReturnsValidationError()
+    {
+        var dir = CreateTempManifestDir("inprocess-app", new McpAppManifest
+        {
+            Id = "inprocess-app",
+            Version = "1.0",
+            Transport = "inprocess",
+        });
+        try
+        {
+            var config = new McpAppsConfig
+            {
+                Enabled = true,
+                DiscoveryPaths = [dir],
+            };
+            var discovery = new McpAppDiscovery(config, NullLogger<McpAppDiscovery>.Instance);
+
+            var results = discovery.Discover();
+
+            Assert.Single(results);
+            Assert.False(results[0].IsValid);
+            Assert.Contains(results[0].ValidationErrors,
+                e => e.Contains("stdio", StringComparison.OrdinalIgnoreCase) &&
+                     e.Contains("http", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -619,6 +655,24 @@ public sealed class McpAppTests : IAsyncDisposable
         Assert.True(discovery.IsAppAllowed(CreateState("anything")));
     }
 
+    [Fact]
+    public void IsAppAllowed_StrictEmptyAllowlist_DeniesAll()
+    {
+        var config = new McpAppsConfig
+        {
+            Enabled = true,
+            AllowlistSemantics = "strict",
+            Allow = [],
+        };
+        var discovery = new McpAppDiscovery(config, NullLogger<McpAppDiscovery>.Instance);
+        var state = CreateState("anything");
+
+        Assert.False(discovery.IsAppAllowed(state));
+        Assert.Equal(McpAppLifecycle.Disabled, state.Lifecycle);
+        Assert.Contains(state.ValidationErrors,
+            e => e.Contains("allowlist", StringComparison.OrdinalIgnoreCase));
+    }
+
     // ── McpAppNativeTool (with HTTP MCP server) ────────────────
 
     [Fact]
@@ -669,15 +723,20 @@ public sealed class McpAppTests : IAsyncDisposable
     [Fact]
     public async Task NativeTool_Execute_WithArguments_InvokesCorrectly()
     {
-        var (serverUrl, calls) = await StartMcpServerAsync<GroceryMcpTools>();
+        var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "test-grocery", Name = "Test Grocery", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "test-grocery",
+            Name = "Test Grocery",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
@@ -710,12 +769,17 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "test-grocery", Name = "Test Grocery", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "test-grocery",
+            Name = "Test Grocery",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
@@ -747,12 +811,17 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "test-grocery", Name = "Test Grocery", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "test-grocery",
+            Name = "Test Grocery",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
@@ -786,12 +855,17 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "grocery", Name = "Grocery Inventory", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
@@ -815,12 +889,17 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "grocery", Name = "Grocery Inventory", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
@@ -842,21 +921,29 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "grocery", Name = "Grocery Inventory", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
         {
-            await server.ConnectAsync(TestContext.Current.CancellationToken);
+            var provider = Assert.IsType<McpAppInfoProvider>(
+                await server.ConnectAsync(TestContext.Current.CancellationToken));
             Assert.Equal(McpAppLifecycle.Running, state.Lifecycle);
+            Assert.NotNull(provider.Client);
 
             await server.DisconnectAsync();
             Assert.Equal(McpAppLifecycle.Stopped, state.Lifecycle);
+            Assert.Null(provider.Client);
         }
         finally
         {
@@ -878,7 +965,9 @@ public sealed class McpAppTests : IAsyncDisposable
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
 
@@ -895,20 +984,26 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "grocery", Name = "Grocery Inventory", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
-        await server.ConnectAsync(TestContext.Current.CancellationToken);
+        var infoProvider = await server.ConnectAsync(TestContext.Current.CancellationToken);
         Assert.Equal(McpAppLifecycle.Running, state.Lifecycle);
 
         await server.DisposeAsync();
 
         Assert.Equal(McpAppLifecycle.Stopped, state.Lifecycle);
+        Assert.Null(infoProvider.Client);
     }
 
     [Fact]
@@ -917,13 +1012,18 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "grocery", Name = "Grocery Inventory", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
             ToolNamePrefix = "grocery.",
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var server = new McpAppServer(state, null, NullLogger<McpAppServer>.Instance);
         try
@@ -945,13 +1045,18 @@ public sealed class McpAppTests : IAsyncDisposable
         var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
         var manifest = new McpAppManifest
         {
-            Id = "grocery", Name = "Grocery Inventory", Version = "1.0",
-            Transport = "http", Url = serverUrl,
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "http",
+            Url = serverUrl,
             ToolNamePrefix = "manifest-prefix.",
         };
         var state = new McpAppInstallState
         {
-            Manifest = manifest, ManifestPath = "/f/openclaw.mcpapp.json", RootPath = "/f",
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
         };
         var entryConfig = new McpAppEntryConfig { ToolNamePrefix = "config-prefix." };
         var server = new McpAppServer(state, entryConfig, NullLogger<McpAppServer>.Instance);
@@ -961,6 +1066,39 @@ public sealed class McpAppTests : IAsyncDisposable
 
             Assert.All(infoProvider.GetToolDescriptors(), t =>
                 Assert.StartsWith("config-prefix.", t.LocalName, StringComparison.Ordinal));
+        }
+        finally
+        {
+            await server.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Server_TransportOverride_IsCaseInsensitive()
+    {
+        var (serverUrl, _) = await StartMcpServerAsync<GroceryMcpTools>();
+        var manifest = new McpAppManifest
+        {
+            Id = "grocery",
+            Name = "Grocery Inventory",
+            Version = "1.0",
+            Transport = "stdio",
+            Command = "unused",
+        };
+        var state = new McpAppInstallState
+        {
+            Manifest = manifest,
+            ManifestPath = "/f/openclaw.mcpapp.json",
+            RootPath = "/f",
+        };
+        var entryConfig = new McpAppEntryConfig { Transport = "HTTP", Url = serverUrl };
+        var server = new McpAppServer(state, entryConfig, NullLogger<McpAppServer>.Instance);
+        try
+        {
+            var infoProvider = await server.ConnectAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(McpAppLifecycle.Running, state.Lifecycle);
+            Assert.NotEmpty(infoProvider.GetToolDescriptors());
         }
         finally
         {
@@ -1021,13 +1159,14 @@ public sealed class McpAppTests : IAsyncDisposable
     [Fact]
     public async Task Registry_LoadAllAsync_OnlyLoadsOnce()
     {
+        var (serverUrl, tracker) = await StartMcpServerAsync<GroceryMcpTools>();
         var dir = CreateTempManifestDir("once-app", new McpAppManifest
         {
             Id = "once-app",
             Name = "Once App",
             Version = "1.0",
             Transport = "http",
-            Url = "http://127.0.0.1:19998/mcp",
+            Url = serverUrl,
             StartupTimeoutSeconds = 1,
         });
         try
@@ -1043,10 +1182,18 @@ public sealed class McpAppTests : IAsyncDisposable
                 NullLoggerFactory.Instance);
 
             await registry.LoadAllAsync(TestContext.Current.CancellationToken);
+            var initializeCalls = tracker.InitializeCalls;
+            var toolListCalls = tracker.ListCalls;
+            var resourceListCalls = tracker.ResourceListCalls;
+            var promptListCalls = tracker.PromptListCalls;
             await registry.LoadAllAsync(TestContext.Current.CancellationToken);
             await registry.LoadAllAsync(TestContext.Current.CancellationToken);
 
-            // Idempotent — no exception
+            Assert.Single(registry.Apps);
+            Assert.Equal(initializeCalls, tracker.InitializeCalls);
+            Assert.Equal(toolListCalls, tracker.ListCalls);
+            Assert.Equal(resourceListCalls, tracker.ResourceListCalls);
+            Assert.Equal(promptListCalls, tracker.PromptListCalls);
         }
         finally
         {

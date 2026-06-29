@@ -1,6 +1,6 @@
 # MCP App Support
 
-MCP App is the module that treats third-party MCP applications as first-class citizens in OpenClaw.NET. It provides manifest-based automatic discovery, lifecycle management, sandbox isolation, and tool bridging — letting MCP applications be installed, discovered, and used much like VS Code extensions.
+MCP App is the module that treats third-party MCP applications as first-class citizens in OpenClaw.NET. It provides manifest-based automatic discovery, lifecycle and process management, and tool bridging — letting MCP applications be installed, discovered, and used much like VS Code extensions.
 
 OpenClaw integrates with the MCP App ecosystem MCP-first, compatible with the [Model Context Protocol](https://modelcontextprotocol.io/) 2025-03-26 spec and the `text/html;profile=mcp-app` interactive UI specification.
 
@@ -20,7 +20,7 @@ MCP App is designed for MCP applications that need to be **packaged and distribu
 
 - Automatic discovery based on `openclaw.mcpapp.json` manifest files
 - Recursive multi-path scanning with nested directory support
-- Three transport modes: stdio, http, and inprocess
+- Two transport modes: stdio and http
 - Allowlist / denylist filtering with glob pattern matching
 - Per-app enable/disable toggle and parameter overrides
 - Automatic tool name prefix application to avoid collisions
@@ -128,7 +128,7 @@ src/mcpapp/
 | `description` | string | No | Short feature description |
 | `version` | string | Recommended | Semantic version |
 | `protocolVersion` | string | No | MCP protocol version, default `2025-03-26` |
-| `transport` | string | No | `stdio`, `http`, or `inprocess`, default `stdio` |
+| `transport` | string | No | `stdio` or `http`, default `stdio` |
 | `command` | string | Required for stdio | Launch command |
 | `arguments` | string[] | No | Command-line arguments |
 | `workingDirectory` | string | No | Working directory for the process |
@@ -413,21 +413,21 @@ GroceryInventory.Api's MCP tool structure has a mirror test class `GroceryMcpToo
 ```bash
 cd e:\GitHub\openclaw.net
 dotnet test src/OpenClaw.Tests --filter "FullyQualifiedName~McpAppTests"
-# Output: Passed! - Failed: 0, Passed: 43
+# Output: Passed! - Failed: 0, Passed: 46
 ```
 
 ## Testing
 
-The MCP App module has comprehensive unit test coverage (43 test cases):
+The MCP App module has comprehensive unit test coverage (46 test cases):
 
 | Test Category | Count | Coverage |
 |---------------|-------|----------|
-| Manifest serialization | 5 | JSON round-trip, minimal JSON defaults, stdio transport, invalid JSON |
+| Manifest serialization | 4 | JSON round-trip, minimal JSON defaults, stdio transport, invalid JSON |
 | Install state | 3 | Defaults, lifecycle transition timestamps, validation errors |
-| InfoProvider | 4 | Basic properties, name fallback, descriptor management |
-| Discovery | 10 | Disabled return, invalid paths, valid loading, nested scan, required field validation, unsupported transport, invalid JSON skip, allow/deny, glob matching, entry config disable |
+| InfoProvider | 3 | Basic properties, name fallback, descriptor management |
+| Discovery | 15 | Disabled return, invalid paths, valid loading, nested scan, required field validation, unsupported transport, invalid JSON skip, allow/deny, strict allowlist semantics, glob matching, entry config disable |
 | NativeTool | 4 | HTTP invocation, argument passing, invalid JSON error, array JSON error |
-| Server | 7 | Connection enumeration, idempotent reconnect, disconnect state transition, invalid command failure, Dispose cleanup, manifest/entryConfig prefix override |
+| Server | 8 | Connection enumeration, idempotent reconnect, disconnect state transition, invalid command failure, Dispose cleanup, manifest/entryConfig prefix override, transport override normalization |
 | Registry | 4 | Graceful degradation on failure, GetApp not found, idempotent loading, double Dispose |
 | Config models | 2 | McpAppsConfig and McpAppEntryConfig defaults |
 | Descriptor models | 3 | Default schema, UI resource flag, prompt arguments |

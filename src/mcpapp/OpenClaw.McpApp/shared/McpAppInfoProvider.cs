@@ -169,7 +169,10 @@ public sealed class McpAppInfoProvider : IMcpAppInfoProvider
     public McpAppInstallState State { get; }
     public bool HasUi => Manifest.HasUi;
     public string? UiResourceUri => Manifest.UiResourceUri;
-    public McpClient? Client { get; }
+    public McpClient? Client { get; private set; }
+
+    internal void SetClient(McpClient? client)
+        => Client = client;
 
     public IReadOnlyList<McpAppToolDescriptor> GetToolDescriptors() => _toolDescriptors;
 

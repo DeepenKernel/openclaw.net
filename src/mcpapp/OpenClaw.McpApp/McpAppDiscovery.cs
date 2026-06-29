@@ -109,8 +109,11 @@ public sealed class McpAppDiscovery(McpAppsConfig config, ILogger<McpAppDiscover
             }
         }
 
-        // Check allowlist
-        if (_config.Allow.Length > 0)
+        // Check allowlist. Legacy mode keeps the historical empty-allowlist behavior,
+        // while strict mode requires an explicit match.
+        var requireAllowlistMatch = _config.Allow.Length > 0 ||
+            string.Equals(_config.AllowlistSemantics, "strict", StringComparison.OrdinalIgnoreCase);
+        if (requireAllowlistMatch)
         {
             var isAllowed = false;
             foreach (var allowed in _config.Allow)
@@ -216,12 +219,9 @@ public sealed class McpAppDiscovery(McpAppsConfig config, ILogger<McpAppDiscover
                     state.ValidationErrors.Add("Transport is 'http' but no 'url' is specified.");
                 }
                 break;
-            case "inprocess":
-                // In-process doesn't need command/url — validated at runtime
-                break;
             default:
                 state.IsValid = false;
-                state.ValidationErrors.Add($"Unsupported transport '{manifest.Transport}'. Use 'stdio', 'http', or 'inprocess'.");
+                state.ValidationErrors.Add($"Unsupported transport '{manifest.Transport}'. Use 'stdio' or 'http'.");
                 break;
         }
     }

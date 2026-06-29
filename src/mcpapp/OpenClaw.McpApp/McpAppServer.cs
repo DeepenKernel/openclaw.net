@@ -81,7 +81,7 @@ public sealed class McpAppServer : IAsyncDisposable
 
             return _infoProvider;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _state.Lifecycle = McpAppLifecycle.Failed;
             _state.StateChangedAt = DateTimeOffset.UtcNow;
@@ -93,6 +93,8 @@ public sealed class McpAppServer : IAsyncDisposable
                 try { await DisposeClientAsync(_client); } catch { }
                 _client = null;
             }
+
+            _infoProvider?.SetClient(null);
 
             throw;
         }
@@ -115,6 +117,8 @@ public sealed class McpAppServer : IAsyncDisposable
                 await DisposeClientAsync(_client);
                 _client = null;
             }
+
+            _infoProvider?.SetClient(null);
 
             _state.Lifecycle = McpAppLifecycle.Stopped;
             _state.StateChangedAt = DateTimeOffset.UtcNow;
@@ -243,7 +247,18 @@ public sealed class McpAppServer : IAsyncDisposable
     }
 
     private string ResolveTransport()
-        => _entryConfig?.Transport ?? _state.Manifest.Transport?.ToLowerInvariant() ?? "stdio";
+    {
+        var transport = (_entryConfig?.Transport ?? _state.Manifest.Transport)?.Trim();
+        if (string.IsNullOrWhiteSpace(transport))
+            return "stdio";
+        if (transport.Equals("streamable-http", StringComparison.OrdinalIgnoreCase) ||
+            transport.Equals("streamable_http", StringComparison.OrdinalIgnoreCase))
+        {
+            return "http";
+        }
+
+        return transport.ToLowerInvariant();
+    }
 
     private int ResolveStartupTimeout()
         => _entryConfig?.StartupTimeoutSeconds ?? _state.Manifest.StartupTimeoutSeconds;

@@ -8,6 +8,7 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
 {
     private readonly IAgentRuntime _agentRuntime;
     private readonly ILogger<SkillWatcherService> _logger;
+    private readonly Action<IReadOnlyList<SkillDefinition>>? _onSkillsReloaded;
     private readonly Channel<byte> _reloadRequests = Channel.CreateUnbounded<byte>(new UnboundedChannelOptions
     {
         SingleReader = true,
@@ -27,10 +28,12 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
         string? workspacePath,
         IReadOnlyList<string>? pluginSkillDirs,
         IAgentRuntime agentRuntime,
-        ILogger<SkillWatcherService> logger)
+        ILogger<SkillWatcherService> logger,
+        Action<IReadOnlyList<SkillDefinition>>? onSkillsReloaded = null)
     {
         _agentRuntime = agentRuntime;
         _logger = logger;
+        _onSkillsReloaded = onSkillsReloaded;
         _watchRoots = GetWatchRoots(config, workspacePath, pluginSkillDirs)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -243,6 +246,11 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
         {
             var loadedSkillNames = await _agentRuntime.ReloadSkillsAsync(_stoppingToken);
             _logger.LogInformation("Reloaded {Count} skills after file change.", loadedSkillNames.Count);
+            if (_onSkillsReloaded is not null)
+            {
+                var skills = _agentRuntime.LoadedSkills;
+                _onSkillsReloaded(skills);
+            }
         }
         catch (OperationCanceledException) when (_stoppingToken.IsCancellationRequested)
         {

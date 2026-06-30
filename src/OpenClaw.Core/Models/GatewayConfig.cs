@@ -442,6 +442,9 @@ public sealed class ToolingConfig
     /// <summary>Seconds to wait for a tool approval decision before denying. Default: 300 (5 minutes).</summary>
     public int ToolApprovalTimeoutSeconds { get; set; } = 300;
 
+    /// <summary>Enable the emit_artifact tool for multi-stage skill artifact publishing.</summary>
+    public bool EnableEmitArtifact { get; set; } = true;
+
     public bool EnableBrowserTool { get; set; } = true;
     public bool AllowBrowserEvaluate { get; set; } = true;
     public bool BrowserHeadless { get; set; } = true;

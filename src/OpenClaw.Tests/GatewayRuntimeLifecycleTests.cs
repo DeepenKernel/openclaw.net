@@ -21,6 +21,7 @@ using OpenClaw.Gateway.Composition;
 using OpenClaw.Gateway.Extensions;
 using OpenClaw.Gateway.Integrations;
 using OpenClaw.Gateway.Pipeline;
+using OpenClaw.Gateway.Tools;
 using OpenClaw.Payments.Core;
 using Xunit;
 
@@ -394,6 +395,7 @@ public sealed class GatewayRuntimeLifecycleTests
             PluginHost = null,
             NativeDynamicPluginHost = null,
             WhatsAppWorkerHost = null,
+            ArtifactRuntime = new SkillArtifactRuntime(),
             RegisteredToolNames = FrozenSet<string>.Empty,
             ChannelAuthEvents = new ChannelAuthEventStore()
         };

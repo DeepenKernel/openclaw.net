@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="OpenClaw.MicrosoftAgentFrameworkAdapter" />
+    <InternalsVisibleTo Include="OpenClaw.Gateway" />
     <InternalsVisibleTo Include="OpenClaw.Tests" />
   </ItemGroup>
   <ItemGroup>

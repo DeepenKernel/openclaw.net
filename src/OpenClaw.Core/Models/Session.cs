@@ -1072,6 +1072,12 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(SkillLoadConfig))]
 [JsonSerializable(typeof(SkillEntryConfig))]
 [JsonSerializable(typeof(Dictionary<string, SkillEntryConfig>))]
+[JsonSerializable(typeof(SkillArtifactContract))]
+[JsonSerializable(typeof(SkillArtifactStageContract))]
+[JsonSerializable(typeof(List<SkillArtifactStageContract>))]
+[JsonSerializable(typeof(SkillArtifactStageGateContract))]
+[JsonSerializable(typeof(SkillArtifactTypeContract))]
+[JsonSerializable(typeof(List<SkillArtifactTypeContract>))]
 [JsonSerializable(typeof(MetricsSnapshot))]
 [JsonSerializable(typeof(SessionBranch))]
 [JsonSerializable(typeof(List<SessionBranch>))]
@@ -1615,6 +1621,8 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(GmailPubSubConfig))]
 [JsonSerializable(typeof(MdnsConfig))]
 [JsonSerializable(typeof(List<ToolDescriptor>))]
+[JsonSerializable(typeof(SkillArtifact))]
+[JsonSerializable(typeof(SkillStageGateEvent))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

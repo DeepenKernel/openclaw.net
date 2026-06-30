@@ -165,6 +165,35 @@ public static class SkillPromptBuilder
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Build the skill body with optional projection resolution.
+    /// When <paramref name="userRequestText"/> is non-null and the skill has projection contracts,
+    /// the best-matching projection patch is appended to the instructions body.
+    /// </summary>
+    public static string BuildSkillBody(SkillDefinition skill, string? userRequestText,
+        Microsoft.Extensions.Logging.ILogger? logger = null)
+    {
+        var body = BuildSkillBody(skill);
+        if (body.Length == 0)
+            return body;
+
+        if (string.IsNullOrWhiteSpace(userRequestText) || skill.ProjectionContracts.Count == 0)
+            return body;
+
+        var resolution = SkillProjectionResolver.ResolveForRequest(
+            skill, userRequestText,
+            logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+        if (resolution.IsBlocked)
+            return body;
+
+        var patch = SkillProjectionResolver.BuildPromptPatch(resolution);
+        if (string.IsNullOrWhiteSpace(patch))
+            return body;
+
+        return body.TrimEnd() + "\n\n" + patch + "\n";
+    }
+
     private static void AppendSkillEntry(StringBuilder sb, SkillDefinition skill)
     {
         sb.AppendLine("<skill>");

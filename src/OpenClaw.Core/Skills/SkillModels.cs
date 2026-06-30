@@ -163,6 +163,15 @@ public sealed class SkillDefinition
     /// (Anthropic-style progressive disclosure, level 3).
     /// </summary>
     public IReadOnlyList<SkillResource> Resources { get; init; } = [];
+
+    /// <summary>Bound projection contracts that can refine this skill per request.</summary>
+    public IReadOnlyList<SkillProjectionContractSet> ProjectionContracts { get; init; } = [];
+
+    /// <summary>Optional machine-readable artifact/stage contract loaded from contracts/artifacts.json.</summary>
+    public SkillArtifactContract? ArtifactContract { get; init; }
+
+    /// <summary>Optional projection contract discovery diagnostics for loader summaries.</summary>
+    public SkillProjectionDiscovery? ProjectionDiscovery { get; init; }
 }
 
 /// <summary>

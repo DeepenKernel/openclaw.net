@@ -37,7 +37,8 @@ internal static partial class RuntimeInitializationExtensions
         string orchestratorId,
         IReadOnlyList<ITool> tools,
         IReadOnlyList<SkillDefinition> skills,
-        CronScheduler? cronScheduler)
+        CronScheduler? cronScheduler,
+        SkillArtifactRuntime artifactRuntime)
     {
         var operations = new RuntimeOperationsState
         {
@@ -98,6 +99,7 @@ internal static partial class RuntimeInitializationExtensions
             NativeDynamicPluginHost = pluginComposition.NativeDynamicPluginHost,
             WhatsAppWorkerHost = channelComposition.WhatsAppWorkerHost,
             RegisteredToolNames = tools.Select(t => t.Name).ToFrozenSet(StringComparer.Ordinal),
+            ArtifactRuntime = artifactRuntime,
             ChannelAuthEvents = WireChannelAuthEvents(channelComposition.ChannelAdapters)
         };
     }
@@ -106,7 +108,8 @@ internal static partial class RuntimeInitializationExtensions
         GatewayConfig config,
         RuntimeServices services,
         string? workspacePath,
-        GatewayRuntimeState runtimeState)
+        GatewayRuntimeState runtimeState,
+        SkillArtifactRuntime artifactRuntime)
     {
         var projectId = config.Memory.ProjectId
             ?? Environment.GetEnvironmentVariable("OPENCLAW_PROJECT")
@@ -205,6 +208,9 @@ internal static partial class RuntimeInitializationExtensions
 
         if (string.Equals(Environment.GetEnvironmentVariable("OPENCLAW_ENABLE_STREAMING_SMOKE_TOOL"), "1", StringComparison.Ordinal))
             tools.Add(new StreamingSmokeEchoTool());
+
+        if (config.Tooling.EnableEmitArtifact)
+            tools.Add(new EmitArtifactTool(services.MediaCache, services.WebSocketChannel, config, artifactRuntime));
 
         return tools;
     }

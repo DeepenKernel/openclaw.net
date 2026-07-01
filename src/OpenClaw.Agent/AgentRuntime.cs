@@ -2028,10 +2028,13 @@ public sealed class AgentRuntime : IAgentRuntime
 
                 if (hasProjectionSkills)
                 {
-                    var effectiveSkills = ResolveSkillsForTurn(_loadedSkills, userMessage, out blockedRoutes);
+                    var effectiveSkills = ResolveSkillsForTurn(_loadedSkills, userMessage, out blockedRoutes, out var projectionPatches);
                     var skillSection = SkillPromptBuilder.BuildIndex(effectiveSkills, _skillsConfig?.InstructionPrompt);
                     var basePrompt = AgentSystemPromptBuilder.BuildBaseSystemPrompt(_requireToolApproval);
                     systemPrompt = string.IsNullOrEmpty(skillSection) ? basePrompt : basePrompt + "\n" + skillSection;
+
+                    if (!string.IsNullOrWhiteSpace(projectionPatches))
+                        systemPrompt += "\n\n[Skill Projection Patches]\n" + projectionPatches.Trim();
                 }
             }
         }
@@ -2051,9 +2054,17 @@ public sealed class AgentRuntime : IAgentRuntime
         IReadOnlyList<SkillDefinition> skills,
         string userMessage,
         out string blockedRoutes)
+        => ResolveSkillsForTurn(skills, userMessage, out blockedRoutes, out _);
+
+    internal static SkillDefinition[] ResolveSkillsForTurn(
+        IReadOnlyList<SkillDefinition> skills,
+        string userMessage,
+        out string blockedRoutes,
+        out string projectionPatches)
     {
         var resolvedSkills = new List<SkillDefinition>(skills.Count);
         var blocked = new System.Text.StringBuilder();
+        var patches = new System.Text.StringBuilder();
 
         foreach (var skill in skills)
         {
@@ -2086,9 +2097,14 @@ public sealed class AgentRuntime : IAgentRuntime
 
             var patchedInstructions = string.Concat(skill.Instructions.TrimEnd(), "\n\n", patch);
             resolvedSkills.Add(CloneSkill(skill, patchedInstructions, skill.DisableModelInvocation));
+
+            patches.AppendLine($"## {skill.Name}");
+            patches.AppendLine(patch);
+            patches.AppendLine();
         }
 
         blockedRoutes = blocked.ToString();
+        projectionPatches = patches.ToString();
         return [.. resolvedSkills];
     }
 

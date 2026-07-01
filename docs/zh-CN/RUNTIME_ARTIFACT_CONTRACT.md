@@ -105,7 +105,7 @@ public sealed record SkillStageGateEvent
 
 ### 2.4 Projection 模型（14 个类）
 
-```
+```text
 SkillProjectionContractSet      — 绑定的投影契约集
 SkillProjectionDiscovery        — 加载诊断信息
 SkillProjectionResolution       — 单次解析结果
@@ -132,7 +132,7 @@ ProjectionDeliveryArtifact      — 产出 Artifact
 
 ### 3.1 磁盘文件布局
 
-```
+```text
 skills/<skill-name>/
 ├── SKILL.md
 └── contracts/
@@ -276,7 +276,7 @@ skills/<skill-name>/
 
 ### 3.5 加载流程
 
-```
+```text
 SkillLoader.ParseSkillContent()
   │
   ├─ ParseSkillFile(filePath, skillDir, source)
@@ -299,7 +299,7 @@ SkillLoader.ParseSkillContent()
 
 ### 4.1 两个 Runtime 全景图
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
 │                     Gateway 启动                              │
 │                                                              │
@@ -324,7 +324,7 @@ SkillLoader.ParseSkillContent()
 
 ### 4.2 每 Turn 完整数据流
 
-```
+```text
 User Message 到达
   │
   ├─ Gateway ReceiveMessage
@@ -419,7 +419,7 @@ User Message 到达
 
 ### 5.1 两级匹配算法
 
-```
+```text
 模型传参                        | 契约状态                | 结果
 ─────────────────────────────────────────────────────────────────
 指定 stage + artifactType      | 均匹配                  | ✅ 成功
@@ -435,7 +435,7 @@ User Message 到达
 
 模型只需提供最低限度的字段，运行时自动补齐：
 
-```
+```text
 模型提供:                   运行时补齐:
   artifact_type (必填)  →    Label       ← artifactType.Label
   stage (可选)          →    Stage       ← 自动推断或直接使用
@@ -445,7 +445,7 @@ User Message 到达
 
 ### 5.3 阶段门控状态机
 
-```
+```text
 Current Stage Terminal Artifact 发出
   │
   ├─ 是最后一个阶段 → null (无门控事件)
@@ -479,7 +479,7 @@ Current Stage Terminal Artifact 发出
 
 ### 6.2 信号评分算法
 
-```
+```text
 Topic 评分:
   Score = Σ PrimaryIntentSignals × 5
         + Σ SupportingSignals × 1
@@ -499,7 +499,7 @@ View 评分:
 
 ### 6.3 决策链
 
-```
+```text
 ResolveForRequest(skill, requestText)
   │
   ├─ 对每个 ProjectionContractSet:
@@ -528,7 +528,7 @@ ResolveForRequest(skill, requestText)
 
 ### 6.4 BuildPromptPatch 输出格式
 
-```
+```text
 [Projection Route]
 Selected topic: task-execution
 Selected target view: prompt-constraint

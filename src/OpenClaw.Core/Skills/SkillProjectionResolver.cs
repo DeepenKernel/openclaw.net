@@ -159,19 +159,13 @@ public static class SkillProjectionResolver
                 totalScore);
         }
 
-        var resolvedViewPath = resolvedView.Item.Path.Replace('/', Path.DirectorySeparatorChar);
-        if (Path.IsPathRooted(resolvedViewPath) || resolvedViewPath.Contains(".."))
+        if (!TryResolveProjectionPath(contract.RootPath, resolvedView.Item.Path, out var projectionPath))
+        {
+            logger.LogWarning("Projection path escaped contract root for skill '{SkillName}': {ProjectionPath}", skillName, resolvedView.Item.Path);
             return ProjectionRouteAttempt.Blocked(
-                Block(skillName, $"Projection view path '{resolvedView.Item.Path}' is not a safe relative path."),
+                Block(skillName, $"Projection file '{resolvedView.Item.Path}' is outside the projection contract root."),
                 totalScore);
-
-        var projectionPath = Path.GetFullPath(Path.Combine(contract.RootPath, resolvedViewPath));
-        var canonicalRoot = Path.GetFullPath(contract.RootPath);
-        if (!projectionPath.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
-            projectionPath != canonicalRoot)
-            return ProjectionRouteAttempt.Blocked(
-                Block(skillName, $"Projection view path '{resolvedView.Item.Path}' escapes the contract root."),
-                totalScore);
+        }
 
         if (!File.Exists(projectionPath))
         {
@@ -243,10 +237,7 @@ public static class SkillProjectionResolver
         var crossTopicPenalty = GetDimensionScore(dimensionScores, "cross_topic_conflict_penalty", -2);
         var threshold = index.TopicScoring?.ClarifyWhenScoreGapBelow ?? 2;
 
-        var topicSignals = index.TopicScoring?.Topics
-            .GroupBy(topic => topic.DomainSlug, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
-            ?? new Dictionary<string, ProjectionTopicSignals>(StringComparer.OrdinalIgnoreCase);
+        var topicSignals = ToFirstByKey(index.TopicScoring?.Topics, static topic => topic.DomainSlug);
 
         var scored = index.Topics
             .Select(topic =>
@@ -301,10 +292,7 @@ public static class SkillProjectionResolver
         var explicitArtifactRequestBonus = GetDimensionScore(dimensionScores, "explicit_user_artifact_request_bonus", 4);
         var threshold = index.TargetViewScoring?.ClarifyWhenScoreGapBelow ?? 2;
 
-        var viewSignals = index.TargetViewScoring?.Views
-            .GroupBy(view => view.TargetView, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
-            ?? new Dictionary<string, ProjectionViewSignals>(StringComparer.OrdinalIgnoreCase);
+        var viewSignals = ToFirstByKey(index.TargetViewScoring?.Views, static view => view.TargetView);
         var topicOverride = index.TargetViewScoring?.WithinTopicOverrides
             .FirstOrDefault(overrideRecord => overrideRecord.DomainSlug.Equals(topic.DomainSlug, StringComparison.OrdinalIgnoreCase));
 
@@ -335,11 +323,9 @@ public static class SkillProjectionResolver
 
                 if (topicOverride is not null)
                 {
-                    foreach (var bonus in topicOverride.Bonuses)
+                    foreach (var bonus in topicOverride.Bonuses.Where(bonus =>
+                        bonus.TargetView.Equals(view.TargetView, StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (!bonus.TargetView.Equals(view.TargetView, StringComparison.OrdinalIgnoreCase))
-                            continue;
-
                         if (HasAnyMatch(requestText, bonus.WhenRequestSignals))
                             score += bonus.Score;
                     }
@@ -373,11 +359,9 @@ public static class SkillProjectionResolver
             if (string.IsNullOrWhiteSpace(targetView))
                 continue;
 
-            foreach (var topic in index.Topics)
+            foreach (var topic in index.Topics.Where(topic =>
+                topic.Views.Any(view => view.TargetView.Equals(targetView, StringComparison.OrdinalIgnoreCase))))
             {
-                if (!topic.Views.Any(view => view.TargetView.Equals(targetView, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-
                 selectedTopic = new ProjectionScore<ProjectionTopicRecord>(topic, 0);
                 return true;
             }
@@ -498,10 +482,64 @@ public static class SkillProjectionResolver
         };
 
     private static Dictionary<string, int> ToScoreMap(IReadOnlyList<ProjectionScoreDimension>? dimensions)
-        => dimensions?
-            .GroupBy(item => item.Dimension, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().Score, StringComparer.OrdinalIgnoreCase)
-            ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        => ToFirstByKey(dimensions, static item => item.Dimension)
+            .ToDictionary(item => item.Key, item => item.Value.Score, StringComparer.OrdinalIgnoreCase);
+
+    private static Dictionary<string, T> ToFirstByKey<T>(IEnumerable<T>? items, Func<T, string?> keySelector)
+    {
+        var values = new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
+        if (items is null)
+            return values;
+
+        foreach (var item in items)
+        {
+            var key = keySelector(item);
+            if (string.IsNullOrWhiteSpace(key) || values.ContainsKey(key))
+                continue;
+
+            values[key] = item;
+        }
+
+        return values;
+    }
+
+    private static bool TryResolveProjectionPath(string rootPath, string relativePath, out string projectionPath)
+    {
+        projectionPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(rootPath) || string.IsNullOrWhiteSpace(relativePath))
+            return false;
+
+        var normalizedRelativePath = relativePath
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(normalizedRelativePath))
+            return false;
+
+        try
+        {
+            var rootFullPath = Path.GetFullPath(rootPath);
+            var candidateFullPath = Path.GetFullPath(Path.Combine(rootFullPath, normalizedRelativePath));
+            var rootWithSeparator = rootFullPath.EndsWith(Path.DirectorySeparatorChar)
+                ? rootFullPath
+                : rootFullPath + Path.DirectorySeparatorChar;
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            if (!candidateFullPath.StartsWith(rootWithSeparator, comparison) &&
+                !string.Equals(candidateFullPath, rootFullPath, comparison))
+            {
+                return false;
+            }
+
+            projectionPath = candidateFullPath;
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or PathTooLongException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     private static int GetDimensionScore(Dictionary<string, int> scores, string name, int fallback)
         => scores.TryGetValue(name, out var value) ? value : fallback;

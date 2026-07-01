@@ -193,11 +193,32 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
             yield return Path.Combine(workspacePath, "skills");
     }
 
-    private void OnWatcherChanged(object sender, FileSystemEventArgs e) => ScheduleReload();
+    private void OnWatcherChanged(object sender, FileSystemEventArgs e)
+    {
+        if (ShouldReloadForPath(e.FullPath))
+            ScheduleReload();
+    }
 
-    private void OnWatcherRenamed(object sender, RenamedEventArgs e) => ScheduleReload();
+    private void OnWatcherRenamed(object sender, RenamedEventArgs e)
+    {
+        if (ShouldReloadForPath(e.FullPath) || ShouldReloadForPath(e.OldFullPath))
+            ScheduleReload();
+    }
 
     internal void NotifySkillChanged() => ScheduleReload();
+
+    private static bool ShouldReloadForPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        if (string.Equals(Path.GetFileName(path), "SKILL.md", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var normalizedPath = path.Replace('\\', '/');
+        return normalizedPath.Contains("/contracts/", StringComparison.OrdinalIgnoreCase) &&
+               normalizedPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void ScheduleReload()
     {

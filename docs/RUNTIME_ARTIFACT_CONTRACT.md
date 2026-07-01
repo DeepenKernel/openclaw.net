@@ -105,7 +105,7 @@ public sealed record SkillStageGateEvent
 
 ### 2.4 Projection Models (14 Classes)
 
-```
+```text
 SkillProjectionContractSet      — Bound projection contract set
 SkillProjectionDiscovery        — Load diagnostics
 SkillProjectionResolution       — Single resolution result
@@ -132,7 +132,7 @@ ProjectionDeliveryArtifact      — Output artifact
 
 ### 3.1 Disk Layout
 
-```
+```text
 skills/<skill-name>/
 ├── SKILL.md
 └── contracts/
@@ -276,7 +276,7 @@ skills/<skill-name>/
 
 ### 3.5 Loading Flow
 
-```
+```text
 SkillLoader.ParseSkillContent()
   │
   ├─ ParseSkillFile(filePath, skillDir, source)
@@ -299,7 +299,7 @@ SkillLoader.ParseSkillContent()
 
 ### 4.1 Runtime Landscape
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
 │                     Gateway Startup                           │
 │                                                              │
@@ -324,7 +324,7 @@ SkillLoader.ParseSkillContent()
 
 ### 4.2 Per-Turn Complete Data Flow
 
-```
+```text
 User Message arrives
   │
   ├─ Gateway ReceiveMessage
@@ -419,7 +419,7 @@ User Message arrives
 
 ### 5.1 Two-Level Matching Algorithm
 
-```
+```text
 Model Input                      | Contract State          | Result
 ─────────────────────────────────────────────────────────────────
 Explicit stage + artifactType    | Both match              | ✅ Success
@@ -435,7 +435,7 @@ No SkillName                     | —                       | ✅ Skip validati
 
 The model only needs to provide minimal fields; the runtime auto-fills the rest:
 
-```
+```text
 Model provides:             Runtime fills:
   artifact_type (required) → Label       ← artifactType.Label
   stage (optional)         → Stage       ← auto-inferred or used directly
@@ -445,7 +445,7 @@ Model provides:             Runtime fills:
 
 ### 5.3 Stage Gate State Machine
 
-```
+```text
 Current Stage Terminal Artifact emitted
   │
   ├─ Is last stage → null (no gate event)
@@ -479,7 +479,7 @@ Current Stage Terminal Artifact emitted
 
 ### 6.2 Signal Scoring Algorithm
 
-```
+```text
 Topic Scoring:
   Score = Σ PrimaryIntentSignals × 5
         + Σ SupportingSignals × 1
@@ -499,7 +499,7 @@ View Scoring:
 
 ### 6.3 Decision Chain
 
-```
+```text
 ResolveForRequest(skill, requestText)
   │
   ├─ For each ProjectionContractSet:
@@ -528,7 +528,7 @@ ResolveForRequest(skill, requestText)
 
 ### 6.4 BuildPromptPatch Output Format
 
-```
+```text
 [Projection Route]
 Selected topic: task-execution
 Selected target view: prompt-constraint

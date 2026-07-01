@@ -70,11 +70,14 @@ internal static partial class RuntimeInitializationExtensions
         var blockedPluginIds = services.PluginHealth.GetBlockedPluginIds();
         var channelComposition = await BuildChannelCompositionAsync(app, startup, services, loggerFactory);
 
+        var artifactRuntime = new SkillArtifactRuntime();
+
         var builtInTools = CreateBuiltInTools(
             config,
             services,
             startup.WorkspacePath,
-            startup.RuntimeState);
+            startup.RuntimeState,
+            artifactRuntime);
         if (config.Plugins.Mcp.Enabled)
             await services.McpRegistry.RegisterToolsAsync(services.NativeRegistry, app.Lifetime.ApplicationStopping);
         await using var mcpAppStartupCleanup = new AsyncStartupCleanupGuard();
@@ -135,6 +138,7 @@ internal static partial class RuntimeInitializationExtensions
         var skills = SkillLoader.LoadAll(config.Skills, startup.WorkspacePath, skillLogger, combinedPluginSkillRoots);
         if (skills.Count > 0)
             skillLogger.LogInformation("{Summary}", SkillPromptBuilder.BuildSummary(skills));
+        artifactRuntime.ReplaceSkills(skills);
         IAgentRuntime? runtimeForLoadSkill = null;
         Func<IReadOnlyList<SkillDefinition>> skillsProvider = () => runtimeForLoadSkill?.LoadedSkills ?? skills;
         tools =
@@ -200,7 +204,8 @@ internal static partial class RuntimeInitializationExtensions
             startup.WorkspacePath,
             combinedPluginSkillRoots,
             agentRuntime,
-            app.Services.GetRequiredService<ILogger<SkillWatcherService>>());
+            app.Services.GetRequiredService<ILogger<SkillWatcherService>>(),
+            skills => artifactRuntime.ReplaceSkills(skills));
         skillWatcher.Start(app.Lifetime.ApplicationStopping);
 
         await services.AutomationService.RefreshCacheAsync(app.Lifetime.ApplicationStopping);
@@ -225,7 +230,8 @@ internal static partial class RuntimeInitializationExtensions
             orchestratorId,
             tools,
             skills,
-            cronScheduler);
+            cronScheduler,
+            artifactRuntime);
         shutdownCoordinator.AttachRuntime(startup, runtime);
 
         services.PluginHealth.SetRuntimeReports(

@@ -38,6 +38,7 @@ using ModelContextProtocol.AspNetCore;
 using OpenClaw.Gateway.Composition;
 using OpenClaw.Gateway.Endpoints;
 using OpenClaw.Gateway.Extensions;
+using OpenClaw.Gateway.Tools;
 using OpenClaw.Gateway.Mcp;
 using OpenClaw.Gateway.Models;
 using OpenClaw.Payments.Core;
@@ -7625,6 +7626,7 @@ public sealed class GatewayAdminEndpointTests
             TwilioSmsWebhookHandler = null,
             PluginHost = null,
             NativeDynamicPluginHost = null,
+            ArtifactRuntime = new SkillArtifactRuntime(),
             RegisteredToolNames = System.Collections.Frozen.FrozenSet<string>.Empty,
             ChannelAuthEvents = new ChannelAuthEventStore()
         };

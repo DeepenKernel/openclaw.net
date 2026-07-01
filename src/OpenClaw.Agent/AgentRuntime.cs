@@ -317,7 +317,7 @@ public sealed class AgentRuntime : IAgentRuntime
             using var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, resumeCheckpoint is not null, responseSchema, ct);
 
         // Build conversation for LLM
-        var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null);
+        var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null, userMessage: userMessage);
         if (resumeCheckpoint is not null)
         {
             messages.Insert(1, new ChatMessage(ChatRole.System, BuildCheckpointResumeInstruction(resumeCheckpoint)));
@@ -596,7 +596,7 @@ public sealed class AgentRuntime : IAgentRuntime
 
             using var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, resumeCheckpoint is not null, responseSchema: null, ct);
 
-        var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null);
+        var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null, userMessage: userMessage);
         if (resumeCheckpoint is not null)
         {
             messages.Insert(1, new ChatMessage(ChatRole.System, BuildCheckpointResumeInstruction(resumeCheckpoint)));
@@ -1729,11 +1729,11 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
-    private List<ChatMessage> BuildMessages(Session session, bool exactLatestToolBatch = false)
+    private List<ChatMessage> BuildMessages(Session session, bool exactLatestToolBatch = false, string? userMessage = null)
     {
         var messages = new List<ChatMessage>
         {
-            new(ChatRole.System, GetSystemPrompt(session))
+            new(ChatRole.System, GetSystemPrompt(session, userMessage))
         };
 
         // Add history (bounded to avoid context overflow)
@@ -2003,21 +2003,135 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
-    private string GetSystemPrompt(Session session)
+    private string GetSystemPrompt(Session session, string? userMessage = null)
     {
         string systemPrompt;
+        string? blockedRoutes = null;
         lock (_skillGate)
         {
             systemPrompt = _systemPrompt;
+
+            // Per-turn projection resolution: when a user message is available and any
+            // loaded skill has projection contracts, resolve them to patch skill instructions
+            // and build a per-turn skill index. Matches kingcrab MafAgentRuntime behavior.
+            if (!string.IsNullOrWhiteSpace(userMessage))
+            {
+                var hasProjectionSkills = false;
+                foreach (var s in _loadedSkills)
+                {
+                    if (s.ProjectionContracts.Count > 0)
+                    {
+                        hasProjectionSkills = true;
+                        break;
+                    }
+                }
+
+                if (hasProjectionSkills)
+                {
+                    var effectiveSkills = ResolveSkillsForTurn(_loadedSkills, userMessage, out blockedRoutes, out var projectionPatches);
+                    var skillSection = SkillPromptBuilder.BuildIndex(effectiveSkills, _skillsConfig?.InstructionPrompt);
+                    var basePrompt = AgentSystemPromptBuilder.BuildBaseSystemPrompt(_requireToolApproval);
+                    systemPrompt = string.IsNullOrEmpty(skillSection) ? basePrompt : basePrompt + "\n" + skillSection;
+
+                    if (!string.IsNullOrWhiteSpace(projectionPatches))
+                        systemPrompt += "\n\n[Skill Projection Patches]\n" + projectionPatches.Trim();
+                }
+            }
         }
 
         systemPrompt = AgentSystemPromptBuilder.ApplyResponseMode(systemPrompt, session.ResponseMode);
 
-        if (string.IsNullOrWhiteSpace(session.SystemPromptOverride))
-            return systemPrompt;
+        if (!string.IsNullOrWhiteSpace(blockedRoutes))
+            systemPrompt += "\n\n[Blocked Skill Routes]\n" + blockedRoutes.Trim();
 
-        return systemPrompt + "\n\n[Route Instructions]\n" + session.SystemPromptOverride.Trim();
+        if (!string.IsNullOrWhiteSpace(session.SystemPromptOverride))
+            return systemPrompt + "\n\n[Route Instructions]\n" + session.SystemPromptOverride.Trim();
+
+        return systemPrompt;
     }
+
+    internal static SkillDefinition[] ResolveSkillsForTurn(
+        IReadOnlyList<SkillDefinition> skills,
+        string userMessage,
+        out string blockedRoutes)
+        => ResolveSkillsForTurn(skills, userMessage, out blockedRoutes, out _);
+
+    internal static SkillDefinition[] ResolveSkillsForTurn(
+        IReadOnlyList<SkillDefinition> skills,
+        string userMessage,
+        out string blockedRoutes,
+        out string projectionPatches)
+    {
+        var resolvedSkills = new List<SkillDefinition>(skills.Count);
+        var blocked = new System.Text.StringBuilder();
+        var patches = new System.Text.StringBuilder();
+
+        foreach (var skill in skills)
+        {
+            if (skill.ProjectionContracts.Count == 0)
+            {
+                resolvedSkills.Add(skill);
+                continue;
+            }
+
+            var resolution = OpenClaw.Core.Skills.SkillProjectionResolver.ResolveForRequest(
+                skill, userMessage,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+            if (resolution.IsBlocked)
+            {
+                blocked.Append("- ");
+                blocked.Append(skill.Name);
+                blocked.Append(": ");
+                blocked.AppendLine(resolution.BlockReason ?? "Projection contract resolution blocked this skill for the current request.");
+                resolvedSkills.Add(CloneSkill(skill, skill.Instructions, disableModelInvocation: true));
+                continue;
+            }
+
+            var patch = OpenClaw.Core.Skills.SkillProjectionResolver.BuildPromptPatch(resolution);
+            if (string.IsNullOrWhiteSpace(patch))
+            {
+                resolvedSkills.Add(skill);
+                continue;
+            }
+
+            var patchedInstructions = string.Concat(skill.Instructions.TrimEnd(), "\n\n", patch);
+            resolvedSkills.Add(CloneSkill(skill, patchedInstructions, skill.DisableModelInvocation));
+
+            patches.AppendLine($"## {skill.Name}");
+            patches.AppendLine(patch);
+            patches.AppendLine();
+        }
+
+        blockedRoutes = blocked.ToString();
+        projectionPatches = patches.ToString();
+        return [.. resolvedSkills];
+    }
+
+    internal static SkillDefinition CloneSkill(SkillDefinition source, string instructions, bool disableModelInvocation)
+        => new()
+        {
+            Name = source.Name,
+            Description = source.Description,
+            Instructions = instructions,
+            Location = source.Location,
+            Source = source.Source,
+            Metadata = source.Metadata,
+            Kind = source.Kind,
+            Triggers = source.Triggers,
+            MetaPriority = source.MetaPriority,
+            FinalTextMode = source.FinalTextMode,
+            Composition = source.Composition,
+            UserInvocable = source.UserInvocable,
+            DisableModelInvocation = disableModelInvocation,
+            CommandDispatch = source.CommandDispatch,
+            CommandTool = source.CommandTool,
+            CommandArgMode = source.CommandArgMode,
+            Resources = source.Resources,
+            ProjectionContracts = source.ProjectionContracts,
+            ProjectionDiscovery = source.ProjectionDiscovery,
+            ArtifactContract = source.ArtifactContract
+        };
 
     private async ValueTask<IDisposable> ApplyTurnRoutingAsync(
         Session session,

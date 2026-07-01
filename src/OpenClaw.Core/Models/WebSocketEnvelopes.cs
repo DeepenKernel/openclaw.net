@@ -95,4 +95,33 @@ public sealed record WsServerEnvelope
     public string? FailureCode { get; init; }
     public string? FailureMessage { get; init; }
     public string? NextStep { get; init; }
+
+    // Artifact / stage-gate envelope payloads.
+    /// <summary>Unified artifact payload (type = "artifact"). Carries the full <see cref="SkillArtifact"/>.</summary>
+    public SkillArtifact? Artifact { get; init; }
+
+    /// <summary>Stage gate transition event (type = "skill_stage_gate") emitted after a terminal artifact.</summary>
+    public SkillStageGateEvent? StageGate { get; init; }
+
+    // File attachment envelope payloads (type = "file_attachment").
+    /// <summary>Relative URL to download the file (e.g. "/media/{id}").</summary>
+    public string? FileUrl { get; init; }
+
+    /// <summary>Original file name for the attachment.</summary>
+    public string? FileName { get; init; }
+
+    /// <summary>MIME type of the attachment.</summary>
+    public string? MimeType { get; init; }
+
+    /// <summary>File size in bytes.</summary>
+    public long? FileSizeBytes { get; init; }
+}
+
+public sealed record SkillStageGateEvent
+{
+    public required string SkillName { get; init; }
+    public required string CompletedStage { get; init; }
+    public required string NextStage { get; init; }
+    public required bool CanProceed { get; init; }
+    public string? BlockedReason { get; init; }
 }

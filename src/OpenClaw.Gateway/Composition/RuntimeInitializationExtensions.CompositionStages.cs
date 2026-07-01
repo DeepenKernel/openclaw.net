@@ -65,6 +65,7 @@ internal static partial class RuntimeInitializationExtensions
             ToolSandbox = app.Services.GetService<IToolSandbox>(),
             Pipeline = app.Services.GetRequiredService<MessagePipeline>(),
             WebSocketChannel = app.Services.GetRequiredService<WebSocketChannel>(),
+            MediaCache = app.Services.GetRequiredService<MediaCacheStore>(),
             CanvasBroker = app.Services.GetRequiredService<CanvasCommandBroker>(),
             NativeRegistry = app.Services.GetRequiredService<NativePluginRegistry>(),
             McpRegistry = app.Services.GetRequiredService<McpServerToolRegistry>(),
@@ -584,6 +585,7 @@ internal static partial class RuntimeInitializationExtensions
         public IToolSandbox? ToolSandbox { get; init; }
         public required MessagePipeline Pipeline { get; init; }
         public required WebSocketChannel WebSocketChannel { get; init; }
+        public required MediaCacheStore MediaCache { get; init; }
         public required CanvasCommandBroker CanvasBroker { get; init; }
         public required NativePluginRegistry NativeRegistry { get; init; }
         public required McpServerToolRegistry McpRegistry { get; init; }

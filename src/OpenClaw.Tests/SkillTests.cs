@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Core.Skills;
 using Xunit;
 
@@ -1928,6 +1929,251 @@ public class SkillLoaderTests
             Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public void ParseSkillFile_WithArtifactContractAndProjections_LoadsBoth()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-skill-contracts-{Guid.NewGuid():N}");
+        var contractsDir = Path.Combine(tempDir, "contracts");
+        var projectionsDir = Path.Combine(contractsDir, "projections", "producer-one");
+        Directory.CreateDirectory(projectionsDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "SKILL.md"), """
+                ---
+                name: pipeline-skill
+                description: A skill with contracts
+                ---
+                Body.
+                """);
+
+            // Add a references/ dir so ScanSkillResources returns at least 1 resource.
+            var referencesDir = Path.Combine(tempDir, "references");
+            Directory.CreateDirectory(referencesDir);
+            File.WriteAllText(Path.Combine(referencesDir, "note.md"), "ref content");
+
+            File.WriteAllText(Path.Combine(contractsDir, "artifacts.json"), """
+                {
+                  "schemaVersion": 2,
+                  "stages": [
+                    {
+                      "name": "design",
+                      "label": "Design Phase",
+                      "artifacts": [
+                        {
+                          "type": "requirements",
+                          "label": "Requirements Doc",
+                          "display": "badge",
+                          "terminal": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            File.WriteAllText(Path.Combine(projectionsDir, "contract-index.json"), """
+                {
+                  "producer_skill": "producer-one",
+                  "producer_priority": 42,
+                  "default_selection_policy": {
+                    "prefer_ready_only": true,
+                    "block_on_open_questions": true,
+                    "fallback_order_by_target_view": ["prompt-constraint"]
+                  },
+                  "topic_scoring": {
+                    "score_dimensions": [
+                      { "dimension": "primary_intent_match", "score": 5 }
+                    ],
+                    "topics": [
+                      {
+                        "domain_slug": "skill-loading",
+                        "primary_intent_signals": ["load skill"],
+                        "supporting_signals": ["skill"],
+                        "explicit_artifact_signals": [],
+                        "demote_when_competing_topic_signals": []
+                      }
+                    ]
+                  },
+                  "target_view_scoring": {
+                    "score_dimensions": [
+                      { "dimension": "explicit_output_match", "score": 5 }
+                    ],
+                    "views": [
+                      {
+                        "target_view": "prompt-constraint",
+                        "explicit_output_signals": ["prompt policy"],
+                        "strong_signals": [],
+                        "supporting_signals": [],
+                        "demote_when_competing_view_signals": []
+                      }
+                    ],
+                    "within_topic_overrides": [
+                      {
+                        "domain_slug": "skill-loading",
+                        "bonuses": [
+                          {
+                            "target_view": "prompt-constraint",
+                            "when_request_signals": ["policy"],
+                            "score": 3
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "topics": [
+                    {
+                      "domain_slug": "skill-loading",
+                      "default_target_view": "prompt-constraint",
+                      "views": [
+                        {
+                          "target_view": "prompt-constraint",
+                          "status": "READY",
+                          "path": "producer-one/skill-loading.prompt-constraint.projection.json"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var skill = SkillLoader.ParseSkillFile(
+                Path.Combine(tempDir, "SKILL.md"),
+                tempDir,
+                SkillSource.Workspace);
+
+            Assert.NotNull(skill);
+            Assert.Single(skill!.Resources);
+            Assert.NotNull(skill.ArtifactContract);
+            Assert.Equal(2, skill.ArtifactContract!.SchemaVersion);
+            var stage = Assert.Single(skill.ArtifactContract.Stages);
+            Assert.Equal("design", stage.Name);
+            Assert.Equal("requirements", Assert.Single(stage.Artifacts).Type);
+
+            var contract = Assert.Single(skill.ProjectionContracts);
+            Assert.Equal("producer-one", contract.ProducerName);
+            Assert.Equal(42, contract.ProducerPriority);
+            Assert.Equal(Path.GetFullPath(projectionsDir), Path.GetFullPath(contract.RootPath));
+            Assert.True(contract.Index.DefaultSelectionPolicy.PreferReadyOnly);
+            Assert.True(contract.Index.DefaultSelectionPolicy.BlockOnOpenQuestions);
+            Assert.Equal(["prompt-constraint"], contract.Index.DefaultSelectionPolicy.FallbackOrderByTargetView);
+            Assert.Equal("skill-loading", Assert.Single(contract.Index.Topics).DomainSlug);
+            Assert.Equal("prompt-constraint", Assert.Single(Assert.Single(contract.Index.Topics).Views).TargetView);
+            Assert.Equal("skill-loading", Assert.Single(contract.Index.TopicScoring!.Topics).DomainSlug);
+            Assert.Equal("prompt-constraint", Assert.Single(contract.Index.TargetViewScoring!.Views).TargetView);
+            Assert.Equal("prompt-constraint", Assert.Single(Assert.Single(contract.Index.TargetViewScoring.WithinTopicOverrides).Bonuses).TargetView);
+
+            Assert.NotNull(skill.ProjectionDiscovery);
+            Assert.Equal("bound", skill.ProjectionDiscovery!.Status);
+            Assert.Equal(1, skill.ProjectionDiscovery.IndexCount);
+            Assert.Equal(1, skill.ProjectionDiscovery.BoundCount);
+            Assert.Equal([Path.Combine(projectionsDir, "contract-index.json")], skill.ProjectionDiscovery.IndexPaths);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ParseSkillFile_WithEmptyProjectionIndex_DoesNotBindProjectionContract()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-skill-empty-projections-{Guid.NewGuid():N}");
+        var projectionsDir = Path.Combine(tempDir, "contracts", "projections", "producer-one");
+        Directory.CreateDirectory(projectionsDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "SKILL.md"), """
+                ---
+                name: empty-projection-skill
+                description: A skill with an empty projection contract
+                ---
+                Body.
+                """);
+
+            File.WriteAllText(Path.Combine(projectionsDir, "contract-index.json"), """
+                {
+                  "producer_skill": "producer-one",
+                  "topics": []
+                }
+                """);
+
+            var skill = SkillLoader.ParseSkillFile(
+                Path.Combine(tempDir, "SKILL.md"),
+                tempDir,
+                SkillSource.Workspace);
+
+            Assert.NotNull(skill);
+            Assert.Empty(skill!.ProjectionContracts);
+            Assert.NotNull(skill.ProjectionDiscovery);
+            Assert.Equal("parse-failed", skill.ProjectionDiscovery!.Status);
+            Assert.Equal(1, skill.ProjectionDiscovery.IndexCount);
+            Assert.Equal(0, skill.ProjectionDiscovery.BoundCount);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ParseSkillFile_WithProjectionIndexMissingRoutingSurface_DoesNotBindProjectionContract()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-skill-useless-projections-{Guid.NewGuid():N}");
+        var projectionsDir = Path.Combine(tempDir, "contracts", "projections", "producer-one");
+        Directory.CreateDirectory(projectionsDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "SKILL.md"), """
+                ---
+                name: unroutable-projection-skill
+                description: A skill with an unroutable projection contract
+                ---
+                Body.
+                """);
+
+            File.WriteAllText(Path.Combine(projectionsDir, "contract-index.json"), """
+                {
+                  "producer_skill": "producer-one",
+                  "default_selection_policy": {
+                    "fallback_order_by_target_view": []
+                  },
+                  "topics": [
+                    {
+                      "domain_slug": "skill-loading",
+                      "default_target_view": "prompt-constraint",
+                      "views": [
+                        {
+                          "target_view": "prompt-constraint",
+                          "status": "READY",
+                          "path": "producer-one/skill-loading.prompt-constraint.projection.json"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var skill = SkillLoader.ParseSkillFile(
+                Path.Combine(tempDir, "SKILL.md"),
+                tempDir,
+                SkillSource.Workspace);
+
+            Assert.NotNull(skill);
+            Assert.Empty(skill!.ProjectionContracts);
+            Assert.NotNull(skill.ProjectionDiscovery);
+            Assert.Equal("parse-failed", skill.ProjectionDiscovery!.Status);
+            Assert.Equal(1, skill.ProjectionDiscovery.IndexCount);
+            Assert.Equal(0, skill.ProjectionDiscovery.BoundCount);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
 }
 
 public class SkillPromptBuilderTests
@@ -2418,7 +2664,8 @@ public class SkillPromptBuilderTests
 public class LoadSkillToolTests
 {
     private static SkillDefinition Skill(string name, string body = "Body.", bool disableModel = false,
-        IReadOnlyList<SkillResource>? resources = null) =>
+        IReadOnlyList<SkillResource>? resources = null,
+        SkillArtifactContract? artifactContract = null) =>
         new()
         {
             Name = name,
@@ -2426,7 +2673,8 @@ public class LoadSkillToolTests
             Instructions = body,
             Location = $"/skills/{name}",
             DisableModelInvocation = disableModel,
-            Resources = resources ?? []
+            Resources = resources ?? [],
+            ArtifactContract = artifactContract
         };
 
     [Fact]
@@ -2536,6 +2784,113 @@ public class LoadSkillToolTests
 
         Assert.Contains("path=\"references/bad&quot;&lt;&gt;&amp;&apos;.md\"", result);
         Assert.DoesNotContain("bad\"<>&'.md", result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AppendsArtifactContract_WhenPresent()
+    {
+        var contract = new SkillArtifactContract
+        {
+            SchemaVersion = 2,
+            Stages =
+            [
+                new SkillArtifactStageContract
+                {
+                    Name = "design",
+                    Label = "Design Phase",
+                    Artifacts =
+                    [
+                        new SkillArtifactTypeContract
+                        {
+                            Type = "requirements",
+                            Label = "Requirements Doc",
+                            Display = "badge",
+                            Terminal = true
+                        }
+                    ]
+                },
+                new SkillArtifactStageContract
+                {
+                    Name = "review",
+                    Label = "Review Phase",
+                    Gate = new SkillArtifactStageGateContract { RequiresStage = "design" },
+                    Artifacts =
+                    [
+                        new SkillArtifactTypeContract
+                        {
+                            Type = "review_checklist",
+                            Label = "Review Checklist",
+                            Display = "tree"
+                            // Terminal omitted (defaults to null) — not written in JSON.
+                        }
+                    ]
+                }
+            ]
+        };
+        var tool = new LoadSkillTool([Skill("pipeline", artifactContract: contract)]);
+
+        var result = await tool.ExecuteAsync("""{"skill":"pipeline"}""", default);
+
+        Assert.Contains("<skill-instructions>", result);
+        Assert.Contains("<skill-artifact-contract>", result);
+        Assert.Contains("\"schema_version\": 2", result);
+        Assert.Contains("\"name\": \"design\"", result);
+        Assert.Contains("\"label\": \"Design Phase\"", result);
+        Assert.Contains("\"type\": \"requirements\"", result);
+        Assert.Contains("\"display\": \"badge\"", result);
+        Assert.Contains("\"terminal\": true", result);
+        Assert.Contains("\"name\": \"review\"", result);
+        Assert.Contains("\"requires_stage\": \"design\"", result);
+        Assert.Contains("\"type\": \"review_checklist\"", result);
+        Assert.Contains("\"display\": \"tree\"", result);
+        Assert.DoesNotContain("\"terminal\": false", result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AppendsArtifactContract_BeforeResourceManifest()
+    {
+        var resources = new List<SkillResource>
+        {
+            new()
+            {
+                Name = "spec.md",
+                RelativePath = "references/spec.md",
+                AbsolutePath = "/skills/dsgn/references/spec.md",
+                Kind = SkillResourceKind.Reference
+            }
+        };
+        var contract = new SkillArtifactContract
+        {
+            Stages =
+            [
+                new SkillArtifactStageContract
+                {
+                    Name = "plan",
+                    Artifacts = [new SkillArtifactTypeContract { Type = "requirements" }]
+                }
+            ]
+        };
+        var tool = new LoadSkillTool([Skill("dsgn", resources: resources, artifactContract: contract)]);
+
+        var result = await tool.ExecuteAsync("""{"skill":"dsgn"}""", default);
+
+        var contractIndex = result.IndexOf("<skill-artifact-contract>", StringComparison.Ordinal);
+        var resourcesIndex = result.IndexOf("<skill-resources>", StringComparison.Ordinal);
+        Assert.True(contractIndex >= 0);
+        Assert.True(resourcesIndex >= 0);
+        Assert.True(contractIndex < resourcesIndex, "Artifact contract must appear before resource manifest");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoArtifactContract_DoesNotInjectBlock()
+    {
+        var tool = new LoadSkillTool([Skill("lean")]);
+
+        var result = await tool.ExecuteAsync("""{"skill":"lean"}""", default);
+
+        Assert.Contains("<skill-instructions>", result);
+        Assert.DoesNotContain("<skill-artifact-contract>", result);
+        Assert.DoesNotContain("schema_version", result);
     }
 
     [Fact]
@@ -3019,6 +3374,477 @@ public class ReadSkillResourceToolTests : IDisposable
     {
         // Lock the public default so SkillsConfig.MaxResourceReadBytes can rely on it.
         Assert.Equal(256 * 1024, ReadSkillResourceTool.DefaultMaxResourceBytes);
+    }
+}
+
+public class SkillProjectionResolverTests
+{
+    private static SkillDefinition SkillWithProjections(
+        string name,
+        string tempDir,
+        string relativePath,
+        IReadOnlyList<string>? explicitArtifactSignals = null,
+        IReadOnlyList<string>? allowedTermsSignals = null,
+        int producerPriority = 0,
+        string? unresolvedItemPolicy = null)
+    {
+        var projectionDir = Path.Combine(tempDir, Path.GetDirectoryName(relativePath)!);
+        Directory.CreateDirectory(projectionDir);
+
+        File.WriteAllText(
+            Path.Combine(tempDir, relativePath),
+            $$"""
+            {
+              "mapping_policy": {
+                "unresolved_item_policy": "{{unresolvedItemPolicy ?? "allow_unmapped_terms"}}"
+              },
+              "prompt_projection": {
+                "allowed_terms": {{(allowedTermsSignals is not null ? JsonSerializer.Serialize(allowedTermsSignals) : "[]")}}
+              },
+              "delivery_artifacts": [],
+              "dropped_items": [],
+              "open_questions": []
+            }
+            """);
+
+        return new SkillDefinition
+        {
+            Name = name,
+            Description = $"Description of {name}",
+            Instructions = "Base skill instructions.",
+            Location = $"/skills/{name}",
+            ProjectionContracts =
+            [
+                new SkillProjectionContractSet
+                {
+                    ProducerName = "test-producer",
+                    ProducerPriority = producerPriority,
+                    RootPath = tempDir,
+                    Index = new ProjectionContractIndex
+                    {
+                        ProducerSkill = "test-producer",
+                        ProducerPriority = producerPriority,
+                        DefaultSelectionPolicy = new ProjectionSelectionPolicy
+                        {
+                            FallbackOrderByTargetView = [SkillProjectionViewKeys.PromptConstraint]
+                        },
+                        Topics =
+                        [
+                            new ProjectionTopicRecord
+                            {
+                                DomainSlug = "task-execution",
+                                DefaultTargetView = SkillProjectionViewKeys.PromptConstraint,
+                                Views =
+                                [
+                                    new ProjectionViewRecord
+                                    {
+                                        TargetView = SkillProjectionViewKeys.PromptConstraint,
+                                        Status = "READY",
+                                        Path = relativePath.Replace('\\', '/')
+                                    }
+                                ]
+                            }
+                        ],
+                        TopicScoring = new ProjectionTopicScoring
+                        {
+                            Topics =
+                            [
+                                new ProjectionTopicSignals
+                                {
+                                    DomainSlug = "task-execution",
+                                    PrimaryIntentSignals = ["task execution"],
+                                    SupportingSignals = ["run"],
+                                    ExplicitArtifactSignals = explicitArtifactSignals ?? [],
+                                    DemoteWhenCompetingTopicSignals = []
+                                }
+                            ]
+                        },
+                        TargetViewScoring = new ProjectionTargetViewScoring
+                        {
+                            Views =
+                            [
+                                new ProjectionViewSignals
+                                {
+                                    TargetView = SkillProjectionViewKeys.PromptConstraint,
+                                    ExplicitOutputSignals = explicitArtifactSignals ?? [],
+                                    StrongSignals = [],
+                                    SupportingSignals = [],
+                                    DemoteWhenCompetingViewSignals = []
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        };
+    }
+
+    [Fact]
+    public void ResolveForRequest_NoProjectionContracts_ReturnsNoContracts()
+    {
+        var skill = new SkillDefinition
+        {
+            Name = "bare",
+            Description = "No projections",
+            Instructions = "Body.",
+            Location = "/skills/bare"
+        };
+
+        var result = SkillProjectionResolver.ResolveForRequest(skill, "task execution",
+            NullLogger.Instance);
+
+        Assert.Equal("bare", result.SkillName);
+        Assert.False(result.HasContracts);
+        Assert.False(result.IsBlocked);
+    }
+
+    [Fact]
+    public void ResolveForRequest_MatchingRequest_PatchesInstructionsWithProjection()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-resolve-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var relativePath = Path.Combine("task-execution",
+                $"task-execution.{SkillProjectionViewKeys.PromptConstraint}.projection.json").Replace('\\', '/');
+            var skill = SkillWithProjections("software-developer", tempDir, relativePath,
+                explicitArtifactSignals: ["prompt policy"],
+                allowedTermsSignals: ["review guidance", "prompt policy"]);
+
+            var result = SkillProjectionResolver.ResolveForRequest(skill, "task execution with prompt policy",
+                NullLogger.Instance);
+
+            Assert.Equal("software-developer", result.SkillName);
+            Assert.True(result.HasContracts);
+            Assert.False(result.IsBlocked);
+            Assert.Equal("task-execution", result.SelectedTopic);
+            Assert.Equal("prompt-constraint", result.SelectedTargetView);
+            Assert.NotNull(result.Projection);
+            Assert.Contains("review guidance", result.Projection!.PromptProjection.AllowedTerms);
+
+            var patch = SkillProjectionResolver.BuildPromptPatch(result);
+            Assert.Contains("[Projection Route]", patch);
+            Assert.Contains("Selected topic: task-execution", patch);
+            Assert.Contains("Selected target view: prompt-constraint", patch);
+            Assert.Contains("review guidance", patch);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ResolveForRequest_DuplicateScoringKeys_DoesNotThrow()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-dup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var relativePath = Path.Combine("task-execution",
+                $"task-execution.{SkillProjectionViewKeys.PromptConstraint}.projection.json").Replace('\\', '/');
+            var skill = SkillWithProjections("software-developer", tempDir, relativePath,
+                allowedTermsSignals: ["review guidance"]);
+            var contract = skill.ProjectionContracts[0];
+            var topicSignal = contract.Index.TopicScoring!.Topics[0];
+            var viewSignal = contract.Index.TargetViewScoring!.Views[0];
+
+            skill = new SkillDefinition
+            {
+                Name = skill.Name,
+                Description = skill.Description,
+                Instructions = skill.Instructions,
+                Location = skill.Location,
+                ProjectionContracts =
+                [
+                    new SkillProjectionContractSet
+                    {
+                        ProducerName = contract.ProducerName,
+                        ProducerPriority = contract.ProducerPriority,
+                        RootPath = contract.RootPath,
+                        Index = new ProjectionContractIndex
+                        {
+                            ProducerSkill = contract.Index.ProducerSkill,
+                            ProducerPriority = contract.Index.ProducerPriority,
+                            DefaultSelectionPolicy = contract.Index.DefaultSelectionPolicy,
+                            Topics = contract.Index.Topics,
+                            TopicScoring = new ProjectionTopicScoring
+                            {
+                                ClarifyWhenScoreGapBelow = contract.Index.TopicScoring.ClarifyWhenScoreGapBelow,
+                                ScoreDimensions = contract.Index.TopicScoring.ScoreDimensions,
+                                Topics = [topicSignal, topicSignal]
+                            },
+                            TargetViewScoring = new ProjectionTargetViewScoring
+                            {
+                                ClarifyWhenScoreGapBelow = contract.Index.TargetViewScoring.ClarifyWhenScoreGapBelow,
+                                PreferExplicitUserArtifactRequests = contract.Index.TargetViewScoring.PreferExplicitUserArtifactRequests,
+                                ScoreDimensions = contract.Index.TargetViewScoring.ScoreDimensions,
+                                Views = [viewSignal, viewSignal],
+                                WithinTopicOverrides = contract.Index.TargetViewScoring.WithinTopicOverrides
+                            }
+                        }
+                    }
+                ]
+            };
+
+            var result = SkillProjectionResolver.ResolveForRequest(skill, "task execution",
+                NullLogger.Instance);
+
+            Assert.False(result.IsBlocked);
+            Assert.Equal("task-execution", result.SelectedTopic);
+            Assert.Contains("review guidance", result.Projection!.PromptProjection.AllowedTerms);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ResolveForRequest_PathEscapingContractRoot_ReturnsBlocked()
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-root-{Guid.NewGuid():N}");
+        var outsideDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootDir);
+        Directory.CreateDirectory(outsideDir);
+        try
+        {
+            var outsidePath = Path.Combine(outsideDir, "projection.json");
+            File.WriteAllText(outsidePath,
+                """
+                {
+                  "mapping_policy": {
+                    "unresolved_item_policy": "allow_unmapped_terms"
+                  },
+                  "prompt_projection": {
+                    "allowed_terms": ["outside"]
+                  },
+                  "delivery_artifacts": [],
+                  "dropped_items": [],
+                  "open_questions": []
+                }
+                """);
+
+            var escapingRelativePath = Path.GetRelativePath(rootDir, outsidePath).Replace('\\', '/');
+            var skill = new SkillDefinition
+            {
+                Name = "software-developer",
+                Description = "Description",
+                Instructions = "Base skill instructions.",
+                Location = rootDir,
+                ProjectionContracts =
+                [
+                    new SkillProjectionContractSet
+                    {
+                        ProducerName = "test-producer",
+                        RootPath = rootDir,
+                        Index = new ProjectionContractIndex
+                        {
+                            DefaultSelectionPolicy = new ProjectionSelectionPolicy
+                            {
+                                FallbackOrderByTargetView = [SkillProjectionViewKeys.PromptConstraint]
+                            },
+                            Topics =
+                            [
+                                new ProjectionTopicRecord
+                                {
+                                    DomainSlug = "task-execution",
+                                    DefaultTargetView = SkillProjectionViewKeys.PromptConstraint,
+                                    Views =
+                                    [
+                                        new ProjectionViewRecord
+                                        {
+                                            TargetView = SkillProjectionViewKeys.PromptConstraint,
+                                            Status = "READY",
+                                            Path = escapingRelativePath
+                                        }
+                                    ]
+                                }
+                            ],
+                            TopicScoring = new ProjectionTopicScoring
+                            {
+                                Topics =
+                                [
+                                    new ProjectionTopicSignals
+                                    {
+                                        DomainSlug = "task-execution",
+                                        PrimaryIntentSignals = ["task execution"],
+                                        SupportingSignals = [],
+                                        ExplicitArtifactSignals = [],
+                                        DemoteWhenCompetingTopicSignals = []
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                ]
+            };
+
+            var result = SkillProjectionResolver.ResolveForRequest(skill, "task execution",
+                NullLogger.Instance);
+
+            Assert.True(result.IsBlocked);
+            Assert.Contains("outside the projection contract root", result.BlockReason);
+        }
+        finally
+        {
+            Directory.Delete(rootDir, true);
+            Directory.Delete(outsideDir, true);
+        }
+    }
+
+    [Fact]
+    public void ResolveForRequest_BlockOnOpenQuestions_ReturnsBlocked()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-block-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var relativePath = Path.Combine("task-execution",
+                $"task-execution.{SkillProjectionViewKeys.PromptConstraint}.projection.json").Replace('\\', '/');
+            var skill = SkillWithProjections("software-developer", tempDir, relativePath,
+                explicitArtifactSignals: ["prompt policy"]);
+
+            // Overwrite projection file to include open_questions.
+            File.WriteAllText(Path.Combine(tempDir, relativePath),
+                """
+                {
+                  "mapping_policy": {
+                    "unresolved_item_policy": "block_or_escalate"
+                  },
+                  "prompt_projection": {
+                    "allowed_terms": ["skills_config"]
+                  },
+                  "delivery_artifacts": [],
+                  "dropped_items": [],
+                  "open_questions": ["Needs clarification."]
+                }
+                """);
+
+            // Override the default_selection_policy in the index to block on open questions.
+            skill = new SkillDefinition
+            {
+                Name = skill.Name,
+                Description = skill.Description,
+                Instructions = skill.Instructions,
+                Location = skill.Location,
+                ProjectionContracts = skill.ProjectionContracts.Select(pc => new SkillProjectionContractSet
+                {
+                    ProducerName = pc.ProducerName,
+                    ProducerPriority = pc.ProducerPriority,
+                    RootPath = pc.RootPath,
+                    Index = pc.Index is { } idx ? new ProjectionContractIndex
+                    {
+                        ProducerSkill = idx.ProducerSkill,
+                        ProducerPriority = idx.ProducerPriority,
+                        DefaultSelectionPolicy = new ProjectionSelectionPolicy
+                        {
+                            BlockOnOpenQuestions = true,
+                            FallbackOrderByTargetView = idx.DefaultSelectionPolicy.FallbackOrderByTargetView
+                        },
+                        Topics = idx.Topics,
+                        TopicScoring = idx.TopicScoring,
+                        TargetViewScoring = idx.TargetViewScoring
+                    } : pc.Index
+                }).ToList()
+            };
+
+            var result = SkillProjectionResolver.ResolveForRequest(skill, "task execution with prompt policy",
+                NullLogger.Instance);
+
+            Assert.True(result.IsBlocked);
+            Assert.Contains("open questions", result.BlockReason);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ResolveForRequest_NoMatchingSignals_FallsBackToOrderedTargetView()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-fallback-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var relativePath = Path.Combine("task-execution",
+                $"task-execution.{SkillProjectionViewKeys.PromptConstraint}.projection.json").Replace('\\', '/');
+            var skill = SkillWithProjections("software-developer", tempDir, relativePath,
+                explicitArtifactSignals: ["prompt policy"]);
+
+            // Request text matches no signals; fallback ordering kicks in.
+            var result = SkillProjectionResolver.ResolveForRequest(skill, "completely unrelated topic",
+                NullLogger.Instance);
+
+            // Fallback resolved successfully, not blocked.
+            Assert.False(result.IsBlocked);
+            Assert.Equal("task-execution", result.SelectedTopic);
+            Assert.Equal("prompt-constraint", result.SelectedTargetView);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void BuildPromptPatch_EmptyResolution_ReturnsEmptyString()
+    {
+        var resolution = new SkillProjectionResolution
+        {
+            SkillName = "test",
+            HasContracts = true,
+            IsBlocked = true,
+            BlockReason = "No matching view"
+        };
+
+        var patch = SkillProjectionResolver.BuildPromptPatch(resolution);
+        Assert.Equal("", patch);
+    }
+
+    [Fact]
+    public void BuildPromptPatch_WithPromptAssumptionPolicy_FormatsConstraint()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-proj-patch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var relativePath = Path.Combine("task-execution",
+                $"task-execution.{SkillProjectionViewKeys.PromptConstraint}.projection.json").Replace('\\', '/');
+            var skill = SkillWithProjections("software-developer", tempDir, relativePath,
+                explicitArtifactSignals: ["prompt policy"],
+                allowedTermsSignals: ["approved term"],
+                unresolvedItemPolicy: null);
+
+            // Overwrite the projection file to include prompt_assumption_policy.
+            File.WriteAllText(Path.Combine(tempDir, relativePath),
+                """
+                {
+                  "mapping_policy": {
+                    "unresolved_item_policy": "allow_unmapped_terms",
+                    "prompt_assumption_policy": "disallow_unmapped_terms"
+                  },
+                  "prompt_projection": {
+                    "allowed_terms": ["approved term"]
+                  },
+                  "delivery_artifacts": [],
+                  "dropped_items": [],
+                  "open_questions": []
+                }
+                """);
+
+            var result = SkillProjectionResolver.ResolveForRequest(skill, "task execution with prompt policy",
+                NullLogger.Instance);
+
+            Assert.False(result.IsBlocked);
+            var patch = SkillProjectionResolver.BuildPromptPatch(result);
+            Assert.Contains("Do not use unmapped terms", patch);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
     }
 }
 

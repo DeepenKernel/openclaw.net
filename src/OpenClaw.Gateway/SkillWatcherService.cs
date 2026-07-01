@@ -75,6 +75,23 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
                 watcher.Deleted += OnWatcherChanged;
                 watcher.Renamed += OnWatcherRenamed;
                 _watchers.Add(watcher);
+
+                // Also watch contract files (artifacts.json, projection indexes, etc.)
+                var jsonWatcher = new FileSystemWatcher(root, "*.json")
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.CreationTime |
+                                   NotifyFilters.FileName |
+                                   NotifyFilters.LastWrite |
+                                   NotifyFilters.Size,
+                    EnableRaisingEvents = true
+                };
+
+                jsonWatcher.Changed += OnWatcherChanged;
+                jsonWatcher.Created += OnWatcherChanged;
+                jsonWatcher.Deleted += OnWatcherChanged;
+                jsonWatcher.Renamed += OnWatcherRenamed;
+                _watchers.Add(jsonWatcher);
             }
             catch (Exception ex)
             {
@@ -88,7 +105,7 @@ internal sealed class SkillWatcherService : IAsyncDisposable, IDisposable
             return;
         }
 
-        _logger.LogInformation("Watching {Count} skill directories for SKILL.md changes.", _watchers.Count);
+        _logger.LogInformation("Watching {Count} skill watchers for SKILL.md and contract JSON changes.", _watchers.Count);
     }
 
     public void Dispose()

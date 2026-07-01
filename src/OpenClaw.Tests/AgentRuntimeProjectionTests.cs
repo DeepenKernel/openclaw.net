@@ -183,6 +183,7 @@ public sealed class AgentRuntimeProjectionTests
         Assert.Equal(source.Metadata.Emoji, nativeClone.Metadata.Emoji);
         Assert.Equal(source.Metadata.Emoji, mafClone.Metadata.Emoji);
         Assert.Equal(source.Metadata.Always, nativeClone.Metadata.Always);
+        Assert.Equal(source.Metadata.Always, mafClone.Metadata.Always);
         Assert.Equal(source.Kind, nativeClone.Kind);
         Assert.Equal(source.Kind, mafClone.Kind);
         Assert.Equal(source.Triggers, nativeClone.Triggers);
@@ -192,6 +193,7 @@ public sealed class AgentRuntimeProjectionTests
         Assert.Equal(source.FinalTextMode, nativeClone.FinalTextMode);
         Assert.Equal(source.FinalTextMode, mafClone.FinalTextMode);
         Assert.Equal(source.UserInvocable, nativeClone.UserInvocable);
+        Assert.Equal(source.UserInvocable, mafClone.UserInvocable);
         Assert.Equal(source.CommandDispatch, nativeClone.CommandDispatch);
         Assert.Equal(source.CommandDispatch, mafClone.CommandDispatch);
         Assert.Equal(source.CommandTool, nativeClone.CommandTool);
@@ -207,6 +209,7 @@ public sealed class AgentRuntimeProjectionTests
         Assert.NotNull(nativeClone.ArtifactContract);
         Assert.NotNull(mafClone.ArtifactContract);
         Assert.Equal(source.ArtifactContract!.SchemaVersion, nativeClone.ArtifactContract!.SchemaVersion);
+        Assert.Equal(source.ArtifactContract!.SchemaVersion, mafClone.ArtifactContract!.SchemaVersion);
     }
 
     [Fact]

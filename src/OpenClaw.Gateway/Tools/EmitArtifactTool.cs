@@ -148,6 +148,11 @@ internal sealed class EmitArtifactTool : IToolWithContext
         if (publishPath is null)
             return "Error: Could not copy artifact to a publishable location. Ensure WorkspaceRoot or an AllowedWriteRoot is configured.";
 
+        var fileInfo = new FileInfo(publishPath);
+        const long maxArtifactBytes = 100 * 1024 * 1024; // 100 MB
+        if (fileInfo.Length > maxArtifactBytes)
+            return $"Error: File exceeds maximum artifact size of {maxArtifactBytes / (1024 * 1024)} MB ({fileInfo.Length} bytes).";
+
         byte[] bytes;
         try { bytes = await File.ReadAllBytesAsync(publishPath, ct); }
         catch (Exception ex) { return $"Error: Could not read file: {ex.Message}"; }
@@ -162,39 +167,40 @@ internal sealed class EmitArtifactTool : IToolWithContext
         var fileUrl = $"/media/{asset.Id}";
         var effectiveLabel = !string.IsNullOrWhiteSpace(label) ? label : fileName;
 
+        // Always validate against the artifact contract, regardless of client type.
+        var fileResult = _artifactRuntime.NormalizeAndRecord(context.Session.Id, new SkillArtifact
+        {
+            Kind = "file",
+            ArtifactType = artifactType,
+            Label = effectiveLabel,
+            SkillName = skillName,
+            Stage = stage,
+            IsTerminal = isTerminal,
+            FileUrl = fileUrl,
+            FileName = fileName,
+            MimeType = mimeType,
+            FileSizeBytes = asset.SizeBytes,
+        });
+        if (!fileResult.Succeeded || fileResult.Artifact is null)
+            return $"Error: {fileResult.Error}";
+
         if (string.Equals(context.Session.ChannelId, "websocket", StringComparison.Ordinal) &&
             _wsChannel.IsClientUsingEnvelopes(context.Session.SenderId))
         {
-            var result = _artifactRuntime.NormalizeAndRecord(context.Session.Id, new SkillArtifact
-            {
-                Kind = "file",
-                ArtifactType = artifactType,
-                Label = effectiveLabel,
-                SkillName = skillName,
-                Stage = stage,
-                IsTerminal = isTerminal,
-                FileUrl = fileUrl,
-                FileName = fileName,
-                MimeType = mimeType,
-                FileSizeBytes = asset.SizeBytes,
-            });
-            if (!result.Succeeded || result.Artifact is null)
-                return $"Error: {result.Error}";
-
             await _wsChannel.SendEnvelopeAsync(context.Session.SenderId, new WsServerEnvelope
             {
                 Type = "artifact",
-                Text = effectiveLabel,
-                Artifact = result.Artifact,
+                Text = fileResult.Artifact.Label ?? fileResult.Artifact.ArtifactType,
+                Artifact = fileResult.Artifact,
             }, ct);
 
-            if (result.StageGate is not null)
+            if (fileResult.StageGate is not null)
             {
                 await _wsChannel.SendEnvelopeAsync(context.Session.SenderId, new WsServerEnvelope
                 {
                     Type = "skill_stage_gate",
-                    Text = result.StageGate.CanProceed ? result.StageGate.NextStage : result.StageGate.BlockedReason,
-                    StageGate = result.StageGate,
+                    Text = fileResult.StageGate.CanProceed ? fileResult.StageGate.NextStage : fileResult.StageGate.BlockedReason,
+                    StageGate = fileResult.StageGate,
                 }, ct);
             }
         }
@@ -220,37 +226,38 @@ internal sealed class EmitArtifactTool : IToolWithContext
             ? hintEl.GetString()
             : null;
 
+        // Always validate against the artifact contract, regardless of client type.
+        var dataResult = _artifactRuntime.NormalizeAndRecord(context.Session.Id, new SkillArtifact
+        {
+            Kind = "data",
+            ArtifactType = artifactType,
+            Label = label,
+            SkillName = skillName,
+            Stage = stage,
+            IsTerminal = isTerminal,
+            Data = dataEl.Clone(),
+            DisplayHint = displayHint,
+        });
+        if (!dataResult.Succeeded || dataResult.Artifact is null)
+            return $"Error: {dataResult.Error}";
+
         if (string.Equals(context.Session.ChannelId, "websocket", StringComparison.Ordinal) &&
             _wsChannel.IsClientUsingEnvelopes(context.Session.SenderId))
         {
-            var result = _artifactRuntime.NormalizeAndRecord(context.Session.Id, new SkillArtifact
-            {
-                Kind = "data",
-                ArtifactType = artifactType,
-                Label = label,
-                SkillName = skillName,
-                Stage = stage,
-                IsTerminal = isTerminal,
-                Data = dataEl.Clone(),
-                DisplayHint = displayHint,
-            });
-            if (!result.Succeeded || result.Artifact is null)
-                return $"Error: {result.Error}";
-
             await _wsChannel.SendEnvelopeAsync(context.Session.SenderId, new WsServerEnvelope
             {
                 Type = "artifact",
-                Text = result.Artifact.Label ?? result.Artifact.ArtifactType,
-                Artifact = result.Artifact,
+                Text = dataResult.Artifact.Label ?? dataResult.Artifact.ArtifactType,
+                Artifact = dataResult.Artifact,
             }, ct);
 
-            if (result.StageGate is not null)
+            if (dataResult.StageGate is not null)
             {
                 await _wsChannel.SendEnvelopeAsync(context.Session.SenderId, new WsServerEnvelope
                 {
                     Type = "skill_stage_gate",
-                    Text = result.StageGate.CanProceed ? result.StageGate.NextStage : result.StageGate.BlockedReason,
-                    StageGate = result.StageGate,
+                    Text = dataResult.StageGate.CanProceed ? dataResult.StageGate.NextStage : dataResult.StageGate.BlockedReason,
+                    StageGate = dataResult.StageGate,
                 }, ct);
             }
         }

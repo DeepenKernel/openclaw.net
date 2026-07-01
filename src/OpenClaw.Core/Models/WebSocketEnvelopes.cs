@@ -97,9 +97,6 @@ public sealed record WsServerEnvelope
     public string? NextStep { get; init; }
 
     // Artifact / stage-gate envelope payloads.
-    /// <summary>Optional semantic type for artifact deliveries emitted by the emit_artifact tool.</summary>
-    public string? ArtifactType { get; init; }
-
     /// <summary>Unified artifact payload (type = "artifact"). Carries the full <see cref="SkillArtifact"/>.</summary>
     public SkillArtifact? Artifact { get; init; }
 

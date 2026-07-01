@@ -3281,7 +3281,7 @@ public static class SkillLoader
         if (root.ValueKind != JsonValueKind.Object)
             return null;
 
-        return new ProjectionContractIndex
+        var index = new ProjectionContractIndex
         {
             ProducerSkill = ReadString(root, "producer_skill"),
             ProducerPriority = ReadInt32(root, "producer_priority", ReadInt32(root, "producer_precedence", 0)),
@@ -3298,6 +3298,22 @@ public static class SkillLoader
                 ? ParseProjectionTopics(topics)
                 : []
         };
+
+        // Reject indexes that have no usable topics or every topic has zero views.
+        if (index.Topics.Count == 0)
+            return null;
+
+        var hasUsableView = false;
+        foreach (var topic in index.Topics)
+        {
+            if (topic.Views.Count > 0)
+            {
+                hasUsableView = true;
+                break;
+            }
+        }
+
+        return hasUsableView ? index : null;
     }
 
     private static ProjectionSelectionPolicy ParseProjectionSelectionPolicy(JsonElement element)

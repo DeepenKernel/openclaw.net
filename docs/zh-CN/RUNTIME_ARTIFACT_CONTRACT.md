@@ -3,6 +3,7 @@
 ## 1. 概述
 
 **ArtifactContract** 和 **Projection** 是 OpenClaw Skill 系统的两个正交扩展：
+<!-- markdownlint-disable MD040 -->
 
 | 系统 | 职责 | 触发时机 |
 |------|------|---------|

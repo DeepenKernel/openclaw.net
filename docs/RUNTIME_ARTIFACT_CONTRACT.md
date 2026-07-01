@@ -3,6 +3,7 @@
 ## 1. Overview
 
 **ArtifactContract** and **Projection** are two orthogonal extensions to the OpenClaw Skill system:
+<!-- markdownlint-disable MD040 -->
 
 | System | Responsibility | Trigger |
 |--------|---------------|---------|

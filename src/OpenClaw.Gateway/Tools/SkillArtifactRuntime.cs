@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Skills;
 
@@ -6,14 +7,15 @@ namespace OpenClaw.Gateway.Tools;
 
 internal sealed class SkillArtifactRuntime
 {
-    private readonly ConcurrentDictionary<string, SkillDefinition> _skills = new(StringComparer.OrdinalIgnoreCase);
+    private ConcurrentDictionary<string, SkillDefinition> _skills = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, StageState> _stageStates = new(StringComparer.OrdinalIgnoreCase);
 
     public void ReplaceSkills(IEnumerable<SkillDefinition> skills)
     {
-        _skills.Clear();
+        var next = new ConcurrentDictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
         foreach (var skill in skills)
-            _skills[skill.Name] = skill;
+            next[skill.Name] = skill;
+        Interlocked.Exchange(ref _skills, next);
     }
 
     public SkillArtifactResult NormalizeAndRecord(string sessionId, SkillArtifact artifact)
@@ -146,6 +148,20 @@ internal sealed class SkillArtifactRuntime
             NextStage = nextStage.Name,
             CanProceed = true
         };
+    }
+
+    /// <summary>
+    /// Remove all stage state entries for a given session.
+    /// Call when a session ends to prevent unbounded growth of _stageStates.
+    /// </summary>
+    public void RemoveSession(string sessionId)
+    {
+        var prefix = sessionId + ":";
+        foreach (var key in _stageStates.Keys)
+        {
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                _stageStates.TryRemove(key, out _);
+        }
     }
 
     private static string StageKey(string sessionId, string skillName, string stageName)

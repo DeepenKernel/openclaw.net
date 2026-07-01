@@ -159,7 +159,20 @@ public static class SkillProjectionResolver
                 totalScore);
         }
 
-        var projectionPath = Path.Combine(contract.RootPath, resolvedView.Item.Path.Replace('/', Path.DirectorySeparatorChar));
+        var resolvedViewPath = resolvedView.Item.Path.Replace('/', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(resolvedViewPath) || resolvedViewPath.Contains(".."))
+            return ProjectionRouteAttempt.Blocked(
+                Block(skillName, $"Projection view path '{resolvedView.Item.Path}' is not a safe relative path."),
+                totalScore);
+
+        var projectionPath = Path.GetFullPath(Path.Combine(contract.RootPath, resolvedViewPath));
+        var canonicalRoot = Path.GetFullPath(contract.RootPath);
+        if (!projectionPath.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            projectionPath != canonicalRoot)
+            return ProjectionRouteAttempt.Blocked(
+                Block(skillName, $"Projection view path '{resolvedView.Item.Path}' escapes the contract root."),
+                totalScore);
+
         if (!File.Exists(projectionPath))
         {
             logger.LogWarning("Projection file not found for skill '{SkillName}' at {ProjectionPath}", skillName, projectionPath);
@@ -230,7 +243,9 @@ public static class SkillProjectionResolver
         var crossTopicPenalty = GetDimensionScore(dimensionScores, "cross_topic_conflict_penalty", -2);
         var threshold = index.TopicScoring?.ClarifyWhenScoreGapBelow ?? 2;
 
-        var topicSignals = index.TopicScoring?.Topics.ToDictionary(topic => topic.DomainSlug, StringComparer.OrdinalIgnoreCase)
+        var topicSignals = index.TopicScoring?.Topics
+            .GroupBy(topic => topic.DomainSlug, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
             ?? new Dictionary<string, ProjectionTopicSignals>(StringComparer.OrdinalIgnoreCase);
 
         var scored = index.Topics
@@ -286,7 +301,9 @@ public static class SkillProjectionResolver
         var explicitArtifactRequestBonus = GetDimensionScore(dimensionScores, "explicit_user_artifact_request_bonus", 4);
         var threshold = index.TargetViewScoring?.ClarifyWhenScoreGapBelow ?? 2;
 
-        var viewSignals = index.TargetViewScoring?.Views.ToDictionary(view => view.TargetView, StringComparer.OrdinalIgnoreCase)
+        var viewSignals = index.TargetViewScoring?.Views
+            .GroupBy(view => view.TargetView, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
             ?? new Dictionary<string, ProjectionViewSignals>(StringComparer.OrdinalIgnoreCase);
         var topicOverride = index.TargetViewScoring?.WithinTopicOverrides
             .FirstOrDefault(overrideRecord => overrideRecord.DomainSlug.Equals(topic.DomainSlug, StringComparison.OrdinalIgnoreCase));
@@ -481,7 +498,9 @@ public static class SkillProjectionResolver
         };
 
     private static Dictionary<string, int> ToScoreMap(IReadOnlyList<ProjectionScoreDimension>? dimensions)
-        => dimensions?.ToDictionary(item => item.Dimension, item => item.Score, StringComparer.OrdinalIgnoreCase)
+        => dimensions?
+            .GroupBy(item => item.Dimension, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Score, StringComparer.OrdinalIgnoreCase)
             ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
     private static int GetDimensionScore(Dictionary<string, int> scores, string name, int fallback)

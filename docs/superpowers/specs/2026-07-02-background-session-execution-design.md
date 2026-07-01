@@ -9,6 +9,8 @@ OpenClaw.NET should treat Channel-activated work as durable session work, not as
 
 The recommended design is a process-local background session execution loop built on the existing `MessagePipeline`, `SessionManager`, Goal integration, and checkpoint mechanism. The runtime executes work in bounded batches. When a batch ends but the active Goal still requires progress, the Gateway writes a low-priority internal continuation message back into the pipeline. Startup recovery scans persisted sessions with runnable background state and re-enqueues them with staggered concurrency.
 
+The behavior must be identical for both configured runtime orchestrators: the native `AgentRuntime` and the Microsoft Agent Framework adapter `MafAgentRuntime`. Background execution is an `IAgentRuntime` contract requirement, not a native-runtime-only feature.
+
 ## Goals
 
 ### P0: Channel-consistent background execution
@@ -32,6 +34,18 @@ The continuation mechanism must:
 - preserve session history and checkpoint semantics;
 - continue only for sessions whose run state and Goal state are runnable;
 - stop on completion, blocker, budget limit, explicit pause/stop, or unrecoverable error.
+
+### P0: Native and MAF runtime parity
+
+The background execution contract must hold for both `Runtime:Orchestrator=native` and `Runtime:Orchestrator=maf`.
+
+Requirements:
+
+- `AgentRuntime` and `MafAgentRuntime` must expose equivalent result metadata through the shared `IAgentRuntime` contract.
+- Both runtimes must honor Goal continuation, batch limits, checkpoint/resume semantics, tool approval, contract governance, and budget stop reasons.
+- The Gateway must not silently downgrade MAF sessions to message-driven behavior.
+- If a configured runtime cannot support the background contract, startup or runtime selection must fail fast with explicit diagnostics.
+- Tests must run the same background continuation scenarios against native and MAF where the MAF adapter is available in the test host.
 
 ### P0: Restart recovery
 
@@ -70,6 +84,7 @@ Users should be able to leave and return without losing context:
 - Do not make Channel adapters own task lifecycle.
 - Do not introduce a mandatory external workflow backend for the core path.
 - Do not bypass tool approval, allowlists, sandboxing, contract governance, or public-bind hardening.
+- Do not make background execution a native-only behavior while `MafAgentRuntime` remains request-bound.
 - Do not claim cross-sandbox recovery. If the instance sandbox and persistent store are deleted, previous work is gone.
 
 ## Key Design Decisions
@@ -79,6 +94,7 @@ Users should be able to leave and return without losing context:
 | Trigger scope | All Channel sessions are eligible once they have runnable Goal/background state | Matches the expected behavior that WebChat and external Channels behave identically |
 | Completion model | Goal semantic judgment plus safety fallback | Lets tasks stop naturally while avoiding unbounded execution |
 | Continuation path | Self-requeue through `MessagePipeline` | Reuses existing routing, backpressure, session locks, and observability |
+| Runtime contract | Implemented by shared `IAgentRuntime` for native and MAF | Prevents orchestrator-specific lifecycle differences |
 | Restart behavior | Configurable, default auto-resume | Meets durability expectations while preserving operator control |
 | Notifications | Channel push plus persisted status/history | Users can be notified when possible and can still inspect state later |
 | WebChat lifecycle | WebSocket connection is not task lifetime | Closing a browser must not cancel work |
@@ -91,7 +107,7 @@ Users should be able to leave and return without losing context:
 |---|---|---|
 | `Session` | Existing, extended | Stores run state, background metadata, checkpoint, history, channel identity |
 | `SessionManager` | Existing, extended | Loads, persists, admits, evicts, and lists runnable background sessions |
-| `AgentRuntime` | Existing, adapted | Executes bounded batches and reports whether the session should continue |
+| `AgentRuntime` / `MafAgentRuntime` | Existing, adapted | Execute bounded batches and report equivalent continuation/stop metadata through `IAgentRuntime` |
 | `GatewayInboundMessageWorker` | Existing, adapted | Runs turns, persists state, emits notifications, and re-enqueues continuation messages |
 | `MessagePipeline` | Existing | Single ingress path for user messages, loop prompts, session sends, and background continuation |
 | `BackgroundSessionRecoveryWorker` | New | Scans persisted sessions on startup and re-enqueues runnable background sessions |
@@ -113,7 +129,8 @@ MessagePipeline
 GatewayInboundMessageWorker
     │
     ▼
-AgentRuntime bounded batch
+Configured IAgentRuntime bounded batch
+(AgentRuntime or MafAgentRuntime)
     │
     ├─ Goal complete / blocked / budget limited / failed → persist + notify + stop
     │
@@ -128,6 +145,8 @@ The self-requeue message is not a user message. It carries the target `SessionId
 ## Runtime Result Model
 
 The current `IAgentRuntime.RunAsync` returns text. The background design needs the caller to know why execution stopped. To avoid a broad breaking change, introduce a result-bearing API while preserving the current method for compatibility.
+
+This API belongs on the shared `IAgentRuntime` surface or an adjacent shared capability interface implemented by both runtime orchestrators. The Gateway must use the same result-bearing path regardless of whether the configured runtime is native or MAF.
 
 Recommended shape:
 
@@ -152,6 +171,10 @@ public enum AgentTurnStopReason
 ```
 
 `RunAsync` can remain as a compatibility wrapper over the result-bearing method, returning `AgentTurnResult.Text`. Gateway background execution uses the richer method.
+
+`RunStreamingAsync` should either expose equivalent terminal metadata or delegate its finalization path to the same internal result builder. WebChat streaming must not be the only place where continuation state is computed; otherwise WebSocket disconnects could produce different behavior than non-streaming Channel turns.
+
+`MafAgentRuntime` may keep MAF-specific internal state handling, but it must translate MAF stop, tool, approval, and Goal outcomes into the same `AgentTurnResult` values as native `AgentRuntime`.
 
 ## Session State Model
 
@@ -349,7 +372,7 @@ This design remains NativeAOT-friendly:
 - store queries use explicit APIs and concrete model types;
 - Channel adapters remain optional integrations.
 
-The design does not add JIT-only requirements. MAF and external durable workflow adapters may later implement equivalent behavior, but the core path is the native Gateway pipeline.
+The design does not add JIT-only requirements to the native runtime path. `MafAgentRuntime` is not allowed to have different user-visible background lifecycle behavior when selected as the orchestrator. If a specific MAF deployment lane has additional hosting or AOT limitations, those limitations must be explicit diagnostics, not silent fallback to non-background execution.
 
 ## Testing
 
@@ -372,6 +395,7 @@ The design does not add JIT-only requirements. MAF and external durable workflow
 - Offline outbound delivery failure does not stop the run.
 - Reconnect loads history and current run state.
 - Completion writes assistant history and sends best-effort notification.
+- The same continuation scenario passes with `Runtime:Orchestrator=native` and `Runtime:Orchestrator=maf`.
 
 ### Startup recovery tests
 
@@ -387,6 +411,7 @@ The design does not add JIT-only requirements. MAF and external durable workflow
 - `/loop` still schedules periodic prompts independently;
 - `sessions_spawn`, `sessions_yield`, and `sessions send` continue to route through the pipeline;
 - tool approval still blocks unsafe work;
+- native and MAF runtimes produce equivalent stop reasons for Goal complete, continue, blocked, budget-limited, and failed outcomes;
 - session eviction remains cache eviction, not deletion;
 - NativeAOT JSON source-generation coverage includes new models.
 
@@ -399,6 +424,7 @@ The design does not add JIT-only requirements. MAF and external durable workflow
 5. Background work stops on completion, blocker, budget limit, explicit pause/stop, or missing sandbox persistence.
 6. Foreground messages and approvals remain responsive while background work is running.
 7. No background task bypasses existing tool approval, allowlist, sandbox, or governance controls.
+8. The same background lifecycle works under both `Runtime:Orchestrator=native` and `Runtime:Orchestrator=maf`, or the unsupported orchestrator path fails fast with explicit diagnostics.
 
 ## Implementation Phases
 
@@ -406,6 +432,7 @@ The design does not add JIT-only requirements. MAF and external durable workflow
 
 - Add session run state and background metadata.
 - Add result-bearing runtime API while preserving current text-returning compatibility method.
+- Implement the result-bearing contract in both `AgentRuntime` and `MafAgentRuntime`.
 - Add config model and JSON source-generation coverage.
 - Add store query for runnable background sessions.
 

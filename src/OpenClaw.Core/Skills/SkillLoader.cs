@@ -3305,28 +3305,12 @@ public static class SkillLoader
 
     private static bool IsUsableProjectionContractIndex(ProjectionContractIndex index)
     {
-        var usableTopics = index.Topics
-            .Where(static topic =>
-                !string.IsNullOrWhiteSpace(topic.DomainSlug) &&
-                !string.IsNullOrWhiteSpace(topic.DefaultTargetView) &&
-                topic.Views.Any(static view =>
-                    !string.IsNullOrWhiteSpace(view.TargetView) &&
-                    !string.IsNullOrWhiteSpace(view.Path)))
-            .ToList();
-        if (usableTopics.Count == 0)
-            return false;
-
-        var hasUsableView = false;
-        foreach (var topic in index.Topics)
-        {
-            if (topic.Views.Count > 0)
-            {
-                hasUsableView = true;
-                break;
-            }
-        }
-
-        return hasUsableView ? index : null;
+        return index.Topics.Any(topic =>
+            !string.IsNullOrWhiteSpace(topic.DomainSlug) &&
+            !string.IsNullOrWhiteSpace(topic.DefaultTargetView) &&
+            topic.Views.Any(view =>
+                !string.IsNullOrWhiteSpace(view.TargetView) &&
+                !string.IsNullOrWhiteSpace(view.Path)));
     }
 
     private static ProjectionSelectionPolicy ParseProjectionSelectionPolicy(JsonElement element)

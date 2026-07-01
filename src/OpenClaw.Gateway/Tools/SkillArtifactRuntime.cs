@@ -7,23 +7,33 @@ namespace OpenClaw.Gateway.Tools;
 
 internal sealed class SkillArtifactRuntime
 {
-    private ConcurrentDictionary<string, SkillDefinition> _skills = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan StageStateTtl = TimeSpan.FromHours(12);
+
+    private IReadOnlyDictionary<string, SkillDefinition> _skills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, StageState> _stageStates = new(StringComparer.OrdinalIgnoreCase);
 
     public void ReplaceSkills(IEnumerable<SkillDefinition> skills)
     {
-        var next = new ConcurrentDictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
+        var nextSkills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
         foreach (var skill in skills)
-            next[skill.Name] = skill;
-        Interlocked.Exchange(ref _skills, next);
+        {
+            if (!string.IsNullOrWhiteSpace(skill.Name))
+                nextSkills[skill.Name] = skill;
+        }
+
+        Volatile.Write(ref _skills, nextSkills);
+        PruneStageStates();
     }
 
     public SkillArtifactResult NormalizeAndRecord(string sessionId, SkillArtifact artifact)
     {
+        PruneStageStates();
+
         if (string.IsNullOrWhiteSpace(artifact.SkillName))
             return SkillArtifactResult.Success(artifact, null);
 
-        if (!_skills.TryGetValue(artifact.SkillName, out var skill))
+        var skills = Volatile.Read(ref _skills);
+        if (!skills.TryGetValue(artifact.SkillName, out var skill))
             return SkillArtifactResult.Failure($"Unknown skill '{artifact.SkillName}'.");
 
         var contract = skill.ArtifactContract;
@@ -32,6 +42,9 @@ internal sealed class SkillArtifactRuntime
 
         if (!TryResolveArtifactContract(contract, artifact, out var stage, out var artifactType, out var error))
             return SkillArtifactResult.Failure(error ?? "Artifact does not match the skill contract.");
+
+        if (!IsStageGateSatisfied(sessionId, skill.Name, stage, out var gateError))
+            return SkillArtifactResult.Failure(gateError ?? $"Stage '{stage.Name}' is not available.");
 
         var normalized = artifact with
         {
@@ -101,6 +114,20 @@ internal sealed class SkillArtifactRuntime
         return false;
     }
 
+    private bool IsStageGateSatisfied(string sessionId, string skillName, SkillArtifactStageContract stage, out string? blockedReason)
+    {
+        blockedReason = null;
+        var requiredStage = stage.Gate?.RequiresStage;
+        if (string.IsNullOrWhiteSpace(requiredStage))
+            return true;
+
+        if (IsStageTerminal(sessionId, skillName, requiredStage))
+            return true;
+
+        blockedReason = $"Stage '{requiredStage}' is not complete.";
+        return false;
+    }
+
     private void MarkStageTerminal(string sessionId, string skillName, string stageName)
     {
         var key = StageKey(sessionId, skillName, stageName);
@@ -129,8 +156,7 @@ internal sealed class SkillArtifactRuntime
         if (!string.IsNullOrWhiteSpace(nextStage.Gate?.RequiresStage))
         {
             var requiredStage = nextStage.Gate.RequiresStage;
-            var satisfied = _stageStates.TryGetValue(StageKey(sessionId, skillName, requiredStage), out var state)
-                && state.IsTerminal;
+            var satisfied = IsStageTerminal(sessionId, skillName, requiredStage);
             return new SkillStageGateEvent
             {
                 SkillName = skillName,
@@ -150,17 +176,30 @@ internal sealed class SkillArtifactRuntime
         };
     }
 
-    /// <summary>
-    /// Remove all stage state entries for a given session.
-    /// Call when a session ends to prevent unbounded growth of _stageStates.
-    /// </summary>
     public void RemoveSession(string sessionId)
     {
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return;
+
         var prefix = sessionId + ":";
         foreach (var key in _stageStates.Keys)
         {
             if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 _stageStates.TryRemove(key, out _);
+        }
+    }
+
+    private bool IsStageTerminal(string sessionId, string skillName, string stageName)
+        => _stageStates.TryGetValue(StageKey(sessionId, skillName, stageName), out var state)
+           && state.IsTerminal;
+
+    private void PruneStageStates()
+    {
+        var cutoff = DateTimeOffset.UtcNow - StageStateTtl;
+        foreach (var state in _stageStates)
+        {
+            if (state.Value.UpdatedAtUtc < cutoff)
+                _stageStates.TryRemove(state.Key, out _);
         }
     }
 

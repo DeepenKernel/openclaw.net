@@ -280,8 +280,8 @@ public sealed class AgentRuntimeProjectionTests
                 CreateSkill("developer", projectionContracts: [contract])
             };
 
-            var nativeResult = AgentRuntime.ResolveSkillsForTurn(skills, "task execution", out var nativeBlocked);
-            var mafResult = MafAgentRuntime.ResolveSkillsForTurn(skills, "task execution", out var mafBlocked);
+            var nativeResult = AgentRuntime.ResolveSkillsForTurn(skills, "task execution", out var nativeBlocked, out var nativePatches);
+            var mafResult = MafAgentRuntime.ResolveSkillsForTurn(skills, "task execution", out var mafBlocked, out var mafPatches);
 
             Assert.Single(nativeResult);
             Assert.Single(mafResult);
@@ -295,6 +295,10 @@ public sealed class AgentRuntimeProjectionTests
             Assert.Contains("Base instructions.", mafResult[0].Instructions);
             Assert.Contains("approved term", nativeResult[0].Instructions);
             Assert.Contains("approved term", mafResult[0].Instructions);
+            Assert.Contains("## developer", nativePatches);
+            Assert.Contains("[Projection Route]", nativePatches);
+            Assert.Contains("approved term", nativePatches);
+            Assert.Equal(nativePatches, mafPatches);
 
             // Patch output should be identical
             Assert.Equal(nativeResult[0].Instructions, mafResult[0].Instructions);

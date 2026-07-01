@@ -26,6 +26,8 @@ namespace OpenClaw.Gateway.Tools;
 /// </summary>
 internal sealed class EmitArtifactTool : IToolWithContext
 {
+    private const long MaxArtifactFileBytes = 64L * 1024 * 1024;
+
     private readonly MediaCacheStore _mediaCache;
     private readonly WebSocketChannel _wsChannel;
     private readonly GatewayConfig _config;
@@ -149,9 +151,8 @@ internal sealed class EmitArtifactTool : IToolWithContext
             return "Error: Could not copy artifact to a publishable location. Ensure WorkspaceRoot or an AllowedWriteRoot is configured.";
 
         var fileInfo = new FileInfo(publishPath);
-        const long maxArtifactBytes = 100 * 1024 * 1024; // 100 MB
-        if (fileInfo.Length > maxArtifactBytes)
-            return $"Error: File exceeds maximum artifact size of {maxArtifactBytes / (1024 * 1024)} MB ({fileInfo.Length} bytes).";
+        if (fileInfo.Length > MaxArtifactFileBytes)
+            return $"Error: Artifact file is too large ({FormatSize(fileInfo.Length)}). Maximum allowed size is {FormatSize(MaxArtifactFileBytes)}.";
 
         byte[] bytes;
         try { bytes = await File.ReadAllBytesAsync(publishPath, ct); }
@@ -167,7 +168,6 @@ internal sealed class EmitArtifactTool : IToolWithContext
         var fileUrl = $"/media/{asset.Id}";
         var effectiveLabel = !string.IsNullOrWhiteSpace(label) ? label : fileName;
 
-        // Always validate against the artifact contract, regardless of client type.
         var fileResult = _artifactRuntime.NormalizeAndRecord(context.Session.Id, new SkillArtifact
         {
             Kind = "file",
@@ -206,7 +206,7 @@ internal sealed class EmitArtifactTool : IToolWithContext
         }
 
         var sizeLabel = FormatSize(asset.SizeBytes);
-        return $"Artifact published: {fileName} ({sizeLabel}) [kind=file type={artifactType}]\n[FILE_URL:{fileUrl}]";
+        return $"Artifact published: {fileName} ({sizeLabel}) [kind=file type={fileResult.Artifact.ArtifactType}]\n[FILE_URL:{fileUrl}]";
     }
 
     // ── kind = "data" ────────────────────────────────────────────────────────
@@ -226,7 +226,6 @@ internal sealed class EmitArtifactTool : IToolWithContext
             ? hintEl.GetString()
             : null;
 
-        // Always validate against the artifact contract, regardless of client type.
         var dataResult = _artifactRuntime.NormalizeAndRecord(context.Session.Id, new SkillArtifact
         {
             Kind = "data",
@@ -262,7 +261,7 @@ internal sealed class EmitArtifactTool : IToolWithContext
             }
         }
 
-        return $"Data artifact emitted: [kind=data type={artifactType} stage={stage ?? "-"} terminal={isTerminal}]";
+        return $"Data artifact emitted: [kind=data type={dataResult.Artifact.ArtifactType} stage={dataResult.Artifact.Stage ?? "-"} terminal={dataResult.Artifact.IsTerminal}]";
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

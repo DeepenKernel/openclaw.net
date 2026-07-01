@@ -370,11 +370,14 @@ public sealed class MafAgentRuntime : IAgentRuntime
 
             AppendContractSnapshot(session, "active");
             LogTurnComplete(turnCtx);
+
+            var hasActiveGoal = _goalIntegration?.BuildGoalSystemPrompt(session.Id) is not null;
             return new Agent.AgentTurnResult
             {
-                Text = "I've reached the maximum number of iterations. Please try a simpler request.",
-                ShouldContinue = false,
-                StopReason = Agent.AgentTurnStopReason.BatchLimitReached
+                Text = "I've reached the maximum number of iterations. Continuing in the background.",
+                ShouldContinue = true,
+                StopReason = Agent.AgentTurnStopReason.BatchLimitReached,
+                ContinuePrompt = hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task."
             };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

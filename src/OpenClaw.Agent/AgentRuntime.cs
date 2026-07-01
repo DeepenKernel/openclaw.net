@@ -558,12 +558,15 @@ public sealed class AgentRuntime : IAgentRuntime
         MarkCheckpointCompleted(session, SessionCheckpointStates.Failed, "max_iterations");
         AppendContractSnapshot(session, "active");
         LogTurnComplete(turnCtx);
-    return new AgentTurnResult
-    {
-        Text = "I've reached the maximum number of tool iterations. Please try a simpler request.",
-        ShouldContinue = false,
-        StopReason = AgentTurnStopReason.BatchLimitReached
-    };
+
+        var hasActiveGoal = _goalIntegration?.BuildGoalSystemPrompt(session.Id) is not null;
+        return new AgentTurnResult
+        {
+            Text = "I've reached the maximum number of tool iterations. Continuing in the background.",
+            ShouldContinue = true,
+            StopReason = AgentTurnStopReason.BatchLimitReached,
+            ContinuePrompt = hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task."
+        };
     }
 
     /// <summary>

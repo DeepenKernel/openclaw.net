@@ -686,8 +686,17 @@ internal sealed class GatewayInboundMessageWorker
                                 await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
 
                                 // Background continuation
-                                if (turnResult.ShouldContinue && config.BackgroundExecution.Enabled && session.BackgroundRun is not null)
+                                if (turnResult.ShouldContinue && config.BackgroundExecution.Enabled)
                                 {
+                                    // Lazy-init BackgroundRun on first continuation
+                                    session.BackgroundRun ??= new BackgroundRunMetadata
+                                    {
+                                        RunId = $"bg_{session.Id}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
+                                        StartedAtUtc = DateTimeOffset.UtcNow,
+                                        TokenBudget = config.BackgroundExecution.DefaultTokenBudget,
+                                        MaxContinuationTurns = config.BackgroundExecution.MaxContinuationTurns
+                                    };
+
                                     session.RunState = SessionRunState.Continuing;
                                     session.BackgroundRun.ContinuationCount++;
                                     session.BackgroundRun.ContinuationSequence++;

@@ -189,6 +189,56 @@ public sealed class GatewayRuntimeLifecycleTests
     }
 
     [Fact]
+    public async Task SkillWatcherService_OnSkillsReloaded_Callback_ReceivesReloadedSkills()
+    {
+        var root = CreateTempRoot();
+        Directory.CreateDirectory(root);
+        try
+        {
+            var skillsRoot = Path.Combine(root, "skills");
+            Directory.CreateDirectory(skillsRoot);
+
+            var config = new SkillsConfig();
+            config.Load.ExtraDirs = [skillsRoot];
+
+            var reloadedSkills = new List<SkillDefinition>
+            {
+                new()
+                {
+                    Name = "reloaded-skill",
+                    Description = "A reloaded skill",
+                    Instructions = "Reloaded body.",
+                    Location = Path.Combine(skillsRoot, "reloaded-skill")
+                }
+            };
+
+            var agentRuntime = Substitute.For<IAgentRuntime>();
+            agentRuntime.CircuitBreakerState.Returns(CircuitState.Closed);
+            agentRuntime.LoadedSkillNames.Returns(["reloaded-skill"]);
+            agentRuntime.LoadedSkills.Returns(reloadedSkills);
+            agentRuntime.ReloadSkillsAsync(Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult<IReadOnlyList<string>>(["reloaded-skill"]));
+
+            var callbackFired = new TaskCompletionSource<IReadOnlyList<SkillDefinition>>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var service = new SkillWatcherService(config, null, [], agentRuntime,
+                NullLogger<SkillWatcherService>.Instance,
+                onSkillsReloaded: skills => callbackFired.TrySetResult(skills));
+            service.Start(TestContext.Current.CancellationToken);
+            service.NotifySkillChanged();
+
+            var received = await callbackFired.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Single(received);
+            Assert.Equal("reloaded-skill", received[0].Name);
+            Assert.Equal("Reloaded body.", received[0].Instructions);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(root);
+        }
+    }
+
+    [Fact]
     public async Task MdnsDiscoveryService_Start_IsIdempotent_AndDisposeStopsInjectedListeners()
     {
         var listenerFactoryCalls = 0;

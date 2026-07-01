@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -3303,17 +3304,7 @@ public static class SkillLoader
         if (index.Topics.Count == 0)
             return null;
 
-        var hasUsableView = false;
-        foreach (var topic in index.Topics)
-        {
-            if (topic.Views.Count > 0)
-            {
-                hasUsableView = true;
-                break;
-            }
-        }
-
-        return hasUsableView ? index : null;
+        return index.Topics.Any(topic => topic.Views.Count > 0) ? index : null;
     }
 
     private static ProjectionSelectionPolicy ParseProjectionSelectionPolicy(JsonElement element)

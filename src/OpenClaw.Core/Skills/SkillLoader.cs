@@ -3305,13 +3305,32 @@ public static class SkillLoader
 
     private static bool IsUsableProjectionContractIndex(ProjectionContractIndex index)
     {
-        return index.Topics.Any(topic =>
-            !string.IsNullOrWhiteSpace(topic.DomainSlug) &&
-            !string.IsNullOrWhiteSpace(topic.DefaultTargetView) &&
-            topic.Views.Any(view =>
-                !string.IsNullOrWhiteSpace(view.TargetView) &&
-                !string.IsNullOrWhiteSpace(view.Path)));
+        var usableTopics = index.Topics
+            .Where(static topic =>
+                !string.IsNullOrWhiteSpace(topic.DomainSlug) &&
+                !string.IsNullOrWhiteSpace(topic.DefaultTargetView) &&
+                topic.Views.Any(static view =>
+                    !string.IsNullOrWhiteSpace(view.TargetView) &&
+                    !string.IsNullOrWhiteSpace(view.Path)))
+            .ToList();
+        if (usableTopics.Count == 0)
+            return false;
+
+        var fallbackViews = index.DefaultSelectionPolicy.FallbackOrderByTargetView
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var hasUsableFallback = fallbackViews.Count > 0 &&
+            usableTopics.Any(topic => topic.Views.Any(view => fallbackViews.Contains(view.TargetView)));
+        var hasUsableTopicSignals = index.TopicScoring?.Topics.Any(HasUsableTopicSignals) == true;
+
+        return hasUsableFallback || hasUsableTopicSignals;
     }
+
+    private static bool HasUsableTopicSignals(ProjectionTopicSignals signals)
+        => !string.IsNullOrWhiteSpace(signals.DomainSlug) &&
+           (signals.PrimaryIntentSignals.Any(static value => !string.IsNullOrWhiteSpace(value)) ||
+            signals.SupportingSignals.Any(static value => !string.IsNullOrWhiteSpace(value)) ||
+            signals.ExplicitArtifactSignals.Any(static value => !string.IsNullOrWhiteSpace(value)));
 
     private static ProjectionSelectionPolicy ParseProjectionSelectionPolicy(JsonElement element)
         => new()

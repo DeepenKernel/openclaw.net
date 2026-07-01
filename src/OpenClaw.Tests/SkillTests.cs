@@ -2117,6 +2117,63 @@ public class SkillLoaderTests
             Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public void ParseSkillFile_WithProjectionIndexMissingRoutingSurface_DoesNotBindProjectionContract()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-skill-useless-projections-{Guid.NewGuid():N}");
+        var projectionsDir = Path.Combine(tempDir, "contracts", "projections", "producer-one");
+        Directory.CreateDirectory(projectionsDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "SKILL.md"), """
+                ---
+                name: unroutable-projection-skill
+                description: A skill with an unroutable projection contract
+                ---
+                Body.
+                """);
+
+            File.WriteAllText(Path.Combine(projectionsDir, "contract-index.json"), """
+                {
+                  "producer_skill": "producer-one",
+                  "default_selection_policy": {
+                    "fallback_order_by_target_view": []
+                  },
+                  "topics": [
+                    {
+                      "domain_slug": "skill-loading",
+                      "default_target_view": "prompt-constraint",
+                      "views": [
+                        {
+                          "target_view": "prompt-constraint",
+                          "status": "READY",
+                          "path": "producer-one/skill-loading.prompt-constraint.projection.json"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var skill = SkillLoader.ParseSkillFile(
+                Path.Combine(tempDir, "SKILL.md"),
+                tempDir,
+                SkillSource.Workspace);
+
+            Assert.NotNull(skill);
+            Assert.Empty(skill!.ProjectionContracts);
+            Assert.NotNull(skill.ProjectionDiscovery);
+            Assert.Equal("parse-failed", skill.ProjectionDiscovery!.Status);
+            Assert.Equal(1, skill.ProjectionDiscovery.IndexCount);
+            Assert.Equal(0, skill.ProjectionDiscovery.BoundCount);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
 }
 
 public class SkillPromptBuilderTests

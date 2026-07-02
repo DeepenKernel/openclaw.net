@@ -161,9 +161,9 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryNo
                 if (session is { BackgroundRun: not null, RunState: SessionRunState.Running or SessionRunState.Continuing })
                     sessions.Add(session);
             }
-            catch
+            catch (Exception ex)
             {
-                // Tolerate corrupt session files — skip and continue scanning
+                _logger?.LogWarning(ex, "Skipping corrupt session file during background scan: {Path}", file);
             }
         }
 

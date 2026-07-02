@@ -222,17 +222,24 @@ public sealed class SqliteMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemory
         while (await reader.ReadAsync(ct))
         {
             ct.ThrowIfCancellationRequested();
-            var json = reader.GetString(0);
-            var session = JsonSerializer.Deserialize(json, CoreJsonContext.Default.Session);
+            Session? session;
+            try
+            {
+                var json = reader.GetString(0);
+                session = JsonSerializer.Deserialize(json, CoreJsonContext.Default.Session);
+            }
+            catch
+            {
+                session = null;
+            }
+
             if (session is { BackgroundRun: not null, RunState: SessionRunState.Running or SessionRunState.Continuing })
                 sessions.Add(session);
-
-            if (sessions.Count >= limit)
-                break;
         }
 
         return sessions
             .OrderBy(static s => s.BackgroundRun?.LastContinuedAtUtc ?? s.LastActiveAt)
+            .Take(limit)
             .ToArray();
     }
 

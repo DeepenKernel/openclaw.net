@@ -617,6 +617,7 @@
         padding: 8px 12px; border-radius: 8px;
         border: 1px solid var(--mud-palette-lines-default);
         background: rgba(245,158,11,.04);
+    }
     .sx-card-tags {
         display: flex; align-items: center; gap: 4px;
     }
@@ -1151,6 +1152,9 @@
             var totalOutputTokens = ReadJsonInt64(el, "totalOutputTokens");
             var totalCacheReadTokens = ReadJsonInt64(el, "totalCacheReadTokens");
             var totalCacheWriteTokens = ReadJsonInt64(el, "totalCacheWriteTokens");
+            var runState = ReadJsonString(el, "runState");
+            var backgroundRunObjective = ReadJsonString(el, "backgroundRunObjective");
+            var backgroundContinuationCount = ReadJsonInt32(el, "backgroundContinuationCount");
 
             dest.Add(new SessionInfo(
                 id,
@@ -1161,7 +1165,10 @@
                 totalOutputTokens,
                 totalCacheReadTokens,
                 totalCacheWriteTokens,
-                null));
+                null,
+                RunState: runState,
+                BackgroundRunObjective: backgroundRunObjective,
+                BackgroundContinuationCount: backgroundContinuationCount));
         }
     }
 
@@ -1192,6 +1199,21 @@
         return 0;
     }
 
+    private static int ReadJsonInt32(System.Text.Json.JsonElement el, string name)
+    {
+        if (!el.TryGetProperty(name, out var v))
+            return 0;
+
+        if (v.ValueKind == System.Text.Json.JsonValueKind.Number && v.TryGetInt32(out var direct))
+            return direct;
+
+        if (v.ValueKind == System.Text.Json.JsonValueKind.String
+            && int.TryParse(v.GetString(), out var parsed))
+            return parsed;
+
+        return 0;
+    }
+
     /// <summary>
     /// Maps Gateway's <c>AdminSessionDetailResponse</c> envelope (containing a nested
     /// <c>Session</c> with <c>history</c> of <c>ChatTurn</c>, plus <c>isActive</c> /
@@ -1210,6 +1232,15 @@
         var totalOutputTokens = ReadJsonInt64(sessionEl, "totalOutputTokens");
         var totalCacheReadTokens = ReadJsonInt64(sessionEl, "totalCacheReadTokens");
         var totalCacheWriteTokens = ReadJsonInt64(sessionEl, "totalCacheWriteTokens");
+        var runState = ReadJsonString(sessionEl, "runState");
+        var backgroundRunObjective = default(string?);
+        var backgroundContinuationCount = 0;
+        if (sessionEl.TryGetProperty("backgroundRun", out var bgRun)
+            && bgRun.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            backgroundRunObjective = ReadJsonString(bgRun, "objective");
+            backgroundContinuationCount = ReadJsonInt32(bgRun, "continuationCount");
+        }
 
         var messages = new List<SessionMessage>();
         if (sessionEl.TryGetProperty("history", out var history)
@@ -1260,7 +1291,10 @@
             totalOutputTokens,
             totalCacheReadTokens,
             totalCacheWriteTokens,
-            metadata.Count == 0 ? null : metadata, messages);
+            metadata.Count == 0 ? null : metadata, messages,
+            RunState: runState,
+            BackgroundRunObjective: backgroundRunObjective,
+            BackgroundContinuationCount: backgroundContinuationCount);
     }
 
     private async Task LoadSessionTimeline(string sessionId)

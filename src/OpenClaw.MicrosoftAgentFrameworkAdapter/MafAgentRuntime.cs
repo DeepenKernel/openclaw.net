@@ -56,6 +56,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly Func<Session, bool>? _isContractRuntimeBudgetExceeded;
     private readonly Action<Session, string>? _appendContractSnapshot;
     private readonly string? _memoryRecallPrefix;
+    private readonly bool _backgroundExecutionEnabled;
     private readonly object _skillGate = new();
     private readonly IList<AITool> _mafTools;
     private readonly IReadOnlyDictionary<string, AITool> _mafToolsByName;
@@ -111,6 +112,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         _compactionKeepRecent = Math.Max(2, context.Config.Memory.CompactionKeepRecent);
         _sessionTokenBudget = context.Config.SessionTokenBudget;
         _maxIterations = 50; // Matches Goal design doc's max iterations guard
+        _backgroundExecutionEnabled = context.Config.BackgroundExecution.Enabled;
         _recall = context.Config.Memory.Recall;
         _requireToolApproval = context.RequireToolApproval;
         _turnTokenUsageObserver = context.TurnTokenUsageObserver;
@@ -372,12 +374,17 @@ public sealed class MafAgentRuntime : IAgentRuntime
             LogTurnComplete(turnCtx);
 
             var hasActiveGoal = _goalIntegration?.BuildGoalSystemPrompt(session.Id) is not null;
+            var canContinue = _backgroundExecutionEnabled;
             return new Agent.AgentTurnResult
             {
-                Text = "I've reached the maximum number of iterations. Continuing in the background.",
-                ShouldContinue = true,
+                Text = canContinue
+                    ? "I've reached the maximum number of iterations. Continuing in the background."
+                    : "I've reached the maximum number of iterations. Task requires more work.",
+                ShouldContinue = canContinue,
                 StopReason = Agent.AgentTurnStopReason.BatchLimitReached,
-                ContinuePrompt = hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task."
+                ContinuePrompt = canContinue
+                    ? (hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task.")
+                    : null
             };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -78,6 +78,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly string? _memoryRecallPrefix;
     private readonly ContextBudgetPlanner? _contextBudgetPlanner;
     private readonly FractalMemoryConfig? _fractalMemory;
+    private readonly bool _backgroundExecutionEnabled;
     private readonly ITurnRoutingPolicy _turnRoutingPolicy;
     private readonly object _skillGate = new();
     private string[] _loadedSkillNames = [];
@@ -196,6 +197,7 @@ public sealed class AgentRuntime : IAgentRuntime
         _profilesConfig = profilesConfig;
         _contextBudgetPlanner = contextBudgetPlanner;
         _fractalMemory = gatewayConfig?.Memory.Fractal;
+        _backgroundExecutionEnabled = gatewayConfig?.BackgroundExecution.Enabled ?? false;
         _turnRoutingPolicy = turnRoutingPolicy ?? NoopTurnRoutingPolicy.Instance;
         _isContractTokenBudgetExceeded = isContractTokenBudgetExceeded;
         _isContractRuntimeBudgetExceeded = isContractRuntimeBudgetExceeded;
@@ -560,12 +562,17 @@ public sealed class AgentRuntime : IAgentRuntime
         LogTurnComplete(turnCtx);
 
         var hasActiveGoal = _goalIntegration?.BuildGoalSystemPrompt(session.Id) is not null;
+        var canContinue = _backgroundExecutionEnabled;
         return new AgentTurnResult
         {
-            Text = "I've reached the maximum number of tool iterations. Continuing in the background.",
-            ShouldContinue = true,
+            Text = canContinue
+                ? "I've reached the maximum number of tool iterations. Continuing in the background."
+                : "I've reached the maximum number of tool iterations. Task requires more work.",
+            ShouldContinue = canContinue,
             StopReason = AgentTurnStopReason.BatchLimitReached,
-            ContinuePrompt = hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task."
+            ContinuePrompt = canContinue
+                ? (hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task.")
+                : null
         };
     }
 

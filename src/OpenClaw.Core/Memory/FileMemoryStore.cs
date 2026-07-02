@@ -147,24 +147,29 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryNo
         foreach (var file in Directory.EnumerateFiles(_sessionsPath, "*.json"))
         {
             ct.ThrowIfCancellationRequested();
-            await using var stream = new FileStream(file, new FileStreamOptions
+            try
             {
-                Mode = FileMode.Open,
-                Access = FileAccess.Read,
-                Share = FileShare.Read,
-                Options = FileOptions.Asynchronous | FileOptions.SequentialScan
-            });
+                await using var stream = new FileStream(file, new FileStreamOptions
+                {
+                    Mode = FileMode.Open,
+                    Access = FileAccess.Read,
+                    Share = FileShare.Read,
+                    Options = FileOptions.Asynchronous | FileOptions.SequentialScan
+                });
 
-            var session = await JsonSerializer.DeserializeAsync(stream, CoreJsonContext.Default.Session, ct);
-            if (session is { BackgroundRun: not null, RunState: SessionRunState.Running or SessionRunState.Continuing })
-                sessions.Add(session);
-
-            if (sessions.Count >= limit)
-                break;
+                var session = await JsonSerializer.DeserializeAsync(stream, CoreJsonContext.Default.Session, ct);
+                if (session is { BackgroundRun: not null, RunState: SessionRunState.Running or SessionRunState.Continuing })
+                    sessions.Add(session);
+            }
+            catch
+            {
+                // Tolerate corrupt session files — skip and continue scanning
+            }
         }
 
         return sessions
             .OrderBy(static s => s.BackgroundRun?.LastContinuedAtUtc ?? s.LastActiveAt)
+            .Take(limit)
             .ToArray();
     }
 
@@ -1122,6 +1127,9 @@ public sealed class FileMemoryStore : IMemoryStore, IMemoryNoteSearch, IMemoryNo
                     TotalOutputTokens = session.TotalOutputTokens,
                     TotalCacheReadTokens = session.TotalCacheReadTokens,
                     TotalCacheWriteTokens = session.TotalCacheWriteTokens,
+                    RunState = session.RunState,
+                    BackgroundRunObjective = session.BackgroundRun?.Objective,
+                    BackgroundContinuationCount = session.BackgroundRun?.ContinuationCount ?? 0,
                     IsActive = false
                 });
             }

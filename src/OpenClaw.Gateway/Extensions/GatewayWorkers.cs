@@ -49,9 +49,12 @@ internal static class GatewayWorkers
         // Start background session recovery if enabled
         if (config.BackgroundExecution.Enabled && config.BackgroundExecution.AutoResumeOnStartup)
         {
-            var backgroundStore = sessionManager.Store as IBackgroundSessionStore;
+            var backgroundStore = sessionManager.Store as IBackgroundSessionStore
+                ?? throw new InvalidOperationException(
+                    "Background execution requires an IBackgroundSessionStore implementation. " +
+                    "The configured IMemoryStore does not support background session queries.");
             var recoveryWorker = new Background.BackgroundSessionRecoveryWorker(
-                backgroundStore, pipeline, config, null!);
+                backgroundStore, pipeline, config, logger);
             _ = Task.Run(async () =>
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), lifetime.ApplicationStopping);

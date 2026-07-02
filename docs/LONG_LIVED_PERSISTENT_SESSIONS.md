@@ -46,7 +46,7 @@ Each `ChatTurn` carries role (`user`/`assistant`/`system`), content, timestamp, 
 
 Dual state machines:
 
-```
+```text
 SessionState (session-level):   Active ──► Paused ──► Expired
 
 SessionRunState (run-level):    Idle ──► Running ──► Continuing
@@ -92,7 +92,7 @@ A session can independently override gateway defaults for:
 
 ## 3. Dual-Layer Persistence Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │                 SessionManager                    │
 │                                                  │
@@ -114,7 +114,7 @@ A session can independently override gateway defaults for:
 
 ### 3.1 Fast Path (Cache Hit)
 
-```
+```text
 Incoming message → _active.TryGetValue(key)
   ├─ Hit → bump LastActiveAt → return immediately (lock-free)
   └─ Miss → acquire _admissionGate → enter slow path
@@ -122,7 +122,7 @@ Incoming message → _active.TryGetValue(key)
 
 ### 3.2 Slow Path (Store Rehydration)
 
-```
+```text
 Acquire _admissionGate semaphore
   ├─ Double-check _active (double-checked locking)
   ├─ _store.GetSessionAsync(key)  ← rehydrate from SQLite
@@ -148,7 +148,7 @@ Sessions evicted from `_active` **remain in IMemoryStore**. The next message reh
 
 ## 4. Session Lifecycle
 
-```
+```text
   ┌──────────┐
   │ Message   │
   │ Arrives   │
@@ -211,7 +211,7 @@ SessionExecutionCheckpoint {
 
 ### 5.2 Write Timing
 
-```
+```text
 AgentRuntime execution loop:
   LLM returns tool calls → execute tools → append assistant[tool_use] to History
   → PersistToolBatchCheckpointAsync()  ← checkpoint written here
@@ -222,7 +222,7 @@ Checkpoints record only **completed tool batch boundaries** — the first durabl
 
 ### 5.3 Resume Logic
 
-```
+```text
 New message → RunTurnAsync():
   TryGetResumableCheckpoint(session)
     ├─ null → normal path: append user turn → compact/trim → build messages
@@ -254,7 +254,7 @@ When a single turn reaches the iteration limit, the session **does not terminate
 
 ### 6.1 Trigger
 
-```
+```text
 RunTurnAsync hits _maxIterations (default 20)
   → Returns AgentTurnResult {
       ShouldContinue: true,
@@ -294,7 +294,7 @@ pipeline.WriteAsync(new InboundMessage {
 
 ### 6.4 Goal Auto-Continuation
 
-```
+```text
 AgentRuntime loop:
   LLM returns text (no tool calls)
     → GoalIntegration.EvaluateGoalContinuation()
@@ -308,7 +308,7 @@ AgentRuntime loop:
 
 `BackgroundSessionRecoveryWorker` executes on gateway startup:
 
-```
+```text
 Gateway starts
   → BackgroundSessionRecoveryWorker.RecoverOnceAsync()
     ├─ Check BackgroundExecution.Enabled && AutoResumeOnStartup
@@ -347,13 +347,13 @@ All inter-session traffic flows through a single `MessagePipeline.InboundWriter`
 |------|------|---------|-------------|
 | `sessions_spawn` | Async (fire-and-forget) | — | Create child session, return session ID immediately |
 | `sessions_yield` | Sync (rendezvous) | 5-300s (default 60s) | Send message, poll for reply |
-| `sessions send` | Async | — | Send to existing session, return immediately |
+| `sessions_send` | Async | — | Send to existing session, return immediately |
 | `sessions list` | Query | — | List all active sessions |
 | `sessions history` | Query | — | Read last N turns of any session |
 
 ### 8.2 `sessions_yield` Internals
 
-```
+```text
 1. Deadlock guard: targetSessionId == currentSessionId → reject
 2. Snapshot: target.History.Count
 3. Enqueue: pipeline.WriteAsync(message)
@@ -383,7 +383,7 @@ Long conversations may exceed LLM context windows. The system provides LLM-based
 
 ### 9.2 Compaction Flow
 
-```
+```text
 History.Count > compactionThreshold
   → Keep last keepRecent turns verbatim
   → Format older turns as summarization request

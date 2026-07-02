@@ -89,8 +89,8 @@ public sealed class TokenCostRateConfig
 
 public sealed class BackgroundExecutionConfig
 {
-    public bool Enabled { get; set; } = true;
-    public bool AutoResumeOnStartup { get; set; } = true;
+    public bool Enabled { get; set; } = false;
+    public bool AutoResumeOnStartup { get; set; } = false;
     public int AutoResumeStaggerSeconds { get; set; } = 5;
     public int AutoResumeMaxConcurrent { get; set; } = 3;
     public int MaxConcurrentBackgroundTurns { get; set; } = 3;

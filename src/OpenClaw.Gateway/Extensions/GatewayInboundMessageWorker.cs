@@ -577,8 +577,23 @@ internal sealed class GatewayInboundMessageWorker
                                 if (!string.IsNullOrWhiteSpace(effectiveResponseMode))
                                     session.ResponseMode = effectiveResponseMode!;
 
+                                Background.BackgroundExecutionLimiter.Releaser? streamLimiterReleaser = null;
                                 try
                                 {
+                                    streamLimiterReleaser = backgroundLimiter is not null
+                                        ? await backgroundLimiter.TryAcquireAsync(msg, processingCt)
+                                        : null;
+
+                                    if (streamLimiterReleaser is null && Background.BackgroundExecutionLimiter.IsBackgroundContinuation(msg))
+                                    {
+                                        // Background concurrency exhausted — drop this turn
+                                        await wsChannel.SendStreamEventAsync(
+                                            msg.SenderId, "text_delta",
+                                            "\n\nBackground execution concurrency limit reached. Turn will be retried.",
+                                            msg.MessageId, processingCt);
+                                        continue;
+                                    }
+
                                     await foreach (var evt in agentRuntime.RunStreamingAsync(
                                         session, messageText, processingCt, approvalCallback: approvalCallback))
                                     {
@@ -597,6 +612,7 @@ internal sealed class GatewayInboundMessageWorker
                                 }
                                 finally
                                 {
+                                    streamLimiterReleaser?.Dispose();
                                     session.ResponseMode = originalResponseMode;
                                 }
                                 await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
@@ -673,12 +689,26 @@ internal sealed class GatewayInboundMessageWorker
                                     session.ResponseMode = effectiveResponseMode!;
 
                                 AgentTurnResult turnResult;
+                                Background.BackgroundExecutionLimiter.Releaser? limiterReleaser = null;
                                 try
                                 {
+                                    limiterReleaser = backgroundLimiter is not null
+                                        ? await backgroundLimiter.TryAcquireAsync(msg, processingCt)
+                                        : null;
+
+                                    if (limiterReleaser is null && Background.BackgroundExecutionLimiter.IsBackgroundContinuation(msg))
+                                    {
+                                        // Background concurrency exhausted — drop this turn; it will be
+                                        // re-enqueued by the requeue path when a permit is available.
+                                        responseText = "Background execution concurrency limit reached. Turn will be retried.";
+                                        continue;
+                                    }
+
                                     turnResult = await agentRuntime.RunTurnAsync(session, messageText, processingCt, approvalCallback: approvalCallback);
                                 }
                                 finally
                                 {
+                                    limiterReleaser?.Dispose();
                                     session.ResponseMode = originalResponseMode;
                                 }
 
@@ -698,31 +728,55 @@ internal sealed class GatewayInboundMessageWorker
                                         MaxContinuationTurns = config.BackgroundExecution.MaxContinuationTurns
                                     };
 
-                                    session.RunState = SessionRunState.Continuing;
                                     session.BackgroundRun.ContinuationCount++;
                                     session.BackgroundRun.ContinuationSequence++;
                                     session.BackgroundRun.LastContinuedAtUtc = DateTimeOffset.UtcNow;
                                     session.BackgroundRun.LastStopReason = turnResult.StopReason.ToString();
 
-                                    await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
-
-                                    await pipeline.InboundWriter.WriteAsync(new InboundMessage
+                                    // Check against MaxContinuationTurns cap
+                                    var maxContinuationTurns = session.BackgroundRun.MaxContinuationTurns > 0
+                                        ? session.BackgroundRun.MaxContinuationTurns
+                                        : config.BackgroundExecution.MaxContinuationTurns;
+                                    if (session.BackgroundRun.ContinuationSequence >= maxContinuationTurns)
                                     {
-                                        ChannelId = msg.ChannelId,
-                                        SenderId = msg.SenderId,
-                                        AccountId = msg.AccountId,
-                                        SessionId = session.Id,
-                                        Text = turnResult.ContinuePrompt ?? "Continue working toward the active goal.",
-                                        Type = BackgroundMessageTypes.AutoContinue,
-                                        IsSystem = true,
-                                        BackgroundRunId = session.BackgroundRun.RunId,
-                                        BackgroundContinuationSequence = session.BackgroundRun.ContinuationSequence
-                                    }, lifetime.ApplicationStopping);
+                                        session.RunState = SessionRunState.BudgetLimited;
+                                        session.BackgroundRun.LastStopReason = "MaxContinuationTurnsReached";
+                                        await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
+                                    }
+                                    else
+                                    {
+                                        session.RunState = SessionRunState.Continuing;
+                                        await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
+
+                                        await pipeline.InboundWriter.WriteAsync(new InboundMessage
+                                        {
+                                            ChannelId = msg.ChannelId,
+                                            SenderId = msg.SenderId,
+                                            AccountId = msg.AccountId,
+                                            SessionId = session.Id,
+                                            Text = turnResult.ContinuePrompt ?? "Continue working toward the active goal.",
+                                            Type = BackgroundMessageTypes.AutoContinue,
+                                            IsSystem = true,
+                                            BackgroundRunId = session.BackgroundRun.RunId,
+                                            BackgroundContinuationSequence = session.BackgroundRun.ContinuationSequence
+                                        }, lifetime.ApplicationStopping);
+                                    }
                                 }
 
                                 // Lifecycle notifications for background task terminal states
                                 if (session.BackgroundRun is not null && !turnResult.ShouldContinue)
                                 {
+                                    // Map StopReason to final SessionRunState and persist
+                                    session.RunState = turnResult.StopReason switch
+                                    {
+                                        AgentTurnStopReason.Completed => SessionRunState.Completed,
+                                        AgentTurnStopReason.Blocked => SessionRunState.Blocked,
+                                        AgentTurnStopReason.BudgetLimited => SessionRunState.BudgetLimited,
+                                        AgentTurnStopReason.Failed => SessionRunState.Failed,
+                                        _ => session.RunState
+                                    };
+                                    await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
+
                                     var notifyText = turnResult.StopReason switch
                                     {
                                         AgentTurnStopReason.Completed => $"Background task completed: {turnResult.Text}",

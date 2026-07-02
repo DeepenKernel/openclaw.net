@@ -94,7 +94,7 @@ public sealed class BackgroundExecutionConfig
     public int AutoResumeStaggerSeconds { get; set; } = 5;
     public int AutoResumeMaxConcurrent { get; set; } = 3;
     public int MaxConcurrentBackgroundTurns { get; set; } = 3;
-    public int MaxIterationsPerBatch { get; set; } = 10;
+    public int MaxIterationsPerBatch { get; set; } = 20;
     public long DefaultTokenBudget { get; set; } = 128_000;
     public int MaxWallClockMinutes { get; set; } = 360;
     public int MaxToolCalls { get; set; } = 1_000;

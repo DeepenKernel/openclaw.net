@@ -84,7 +84,7 @@ public sealed class BackgroundSessionModelTests
         Assert.True(config.BackgroundExecution.Enabled);
         Assert.True(config.BackgroundExecution.AutoResumeOnStartup);
         Assert.Equal(3, config.BackgroundExecution.MaxConcurrentBackgroundTurns);
-        Assert.Equal(10, config.BackgroundExecution.MaxIterationsPerBatch);
+        Assert.Equal(20, config.BackgroundExecution.MaxIterationsPerBatch);
         Assert.Equal(128_000, config.BackgroundExecution.DefaultTokenBudget);
     }
 }

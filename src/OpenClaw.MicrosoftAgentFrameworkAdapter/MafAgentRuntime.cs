@@ -56,6 +56,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly Func<Session, bool>? _isContractRuntimeBudgetExceeded;
     private readonly Action<Session, string>? _appendContractSnapshot;
     private readonly string? _memoryRecallPrefix;
+    private readonly bool _backgroundExecutionEnabled;
     private readonly object _skillGate = new();
     private readonly IList<AITool> _mafTools;
     private readonly IReadOnlyDictionary<string, AITool> _mafToolsByName;
@@ -111,6 +112,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         _compactionKeepRecent = Math.Max(2, context.Config.Memory.CompactionKeepRecent);
         _sessionTokenBudget = context.Config.SessionTokenBudget;
         _maxIterations = 50; // Matches Goal design doc's max iterations guard
+        _backgroundExecutionEnabled = context.Config.BackgroundExecution.Enabled;
         _recall = context.Config.Memory.Recall;
         _requireToolApproval = context.RequireToolApproval;
         _turnTokenUsageObserver = context.TurnTokenUsageObserver;
@@ -203,6 +205,18 @@ public sealed class MafAgentRuntime : IAgentRuntime
         System.Text.Json.JsonElement? responseSchema = null,
         string? correlationId = null)
     {
+        var result = await RunTurnAsync(session, userMessage, ct, approvalCallback, responseSchema, correlationId);
+        return result.Text;
+    }
+
+    public async Task<Agent.AgentTurnResult> RunTurnAsync(
+        Session session,
+        string userMessage,
+        CancellationToken ct,
+        ToolApprovalCallback? approvalCallback = null,
+        System.Text.Json.JsonElement? responseSchema = null,
+        string? correlationId = null)
+    {
         using var activity = _telemetry.StartRunActivity("Agent.Maf.RunAsync", session, _runtimeState);
         var resolvedCorrelationId = ResolveCorrelationId(correlationId);
         var turnCtx = new TurnContext
@@ -223,13 +237,18 @@ public sealed class MafAgentRuntime : IAgentRuntime
         {
             AppendContractSnapshot(session, "budget_exceeded");
             LogTurnComplete(turnCtx);
-            return contractBudgetMessage;
+            return Agent.AgentTurnResult.Completed(contractBudgetMessage);
         }
 
         if (_sessionTokenBudget > 0 && session.GetTotalTokens() >= _sessionTokenBudget)
         {
             LogTurnComplete(turnCtx);
-            return "You've reached the token limit for this session. Please start a new conversation.";
+            return new Agent.AgentTurnResult
+            {
+                Text = "You've reached the token limit for this session. Please start a new conversation.",
+                ShouldContinue = false,
+                StopReason = Agent.AgentTurnStopReason.BudgetLimited
+            };
         }
 
         var sidecarHistoryHash = MafSessionStateStore.ComputeHistoryHash(session);
@@ -332,12 +351,12 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 {
                     AppendContractSnapshot(session, "budget_exceeded");
                     LogTurnComplete(turnCtx);
-                    return contractBudgetMessage;
+                    return Agent.AgentTurnResult.Completed(contractBudgetMessage);
                 }
 
                 AppendContractSnapshot(session, "active");
                 LogTurnComplete(turnCtx);
-                return text;
+                return Agent.AgentTurnResult.Completed(text);
             }
 
             // Max iterations reached
@@ -348,12 +367,25 @@ public sealed class MafAgentRuntime : IAgentRuntime
             {
                 AppendContractSnapshot(session, "budget_exceeded");
                 LogTurnComplete(turnCtx);
-                return contractBudgetMessage;
+                return Agent.AgentTurnResult.Completed(contractBudgetMessage);
             }
 
             AppendContractSnapshot(session, "active");
             LogTurnComplete(turnCtx);
-            return "I've reached the maximum number of iterations. Please try a simpler request.";
+
+            var hasActiveGoal = _goalIntegration?.BuildGoalSystemPrompt(session.Id) is not null;
+            var canContinue = _backgroundExecutionEnabled;
+            return new Agent.AgentTurnResult
+            {
+                Text = canContinue
+                    ? "I've reached the maximum number of iterations. Continuing in the background."
+                    : "I've reached the maximum number of iterations. Task requires more work.",
+                ShouldContinue = canContinue,
+                StopReason = Agent.AgentTurnStopReason.BatchLimitReached,
+                ContinuePrompt = canContinue
+                    ? (hasActiveGoal ? "Continue working toward the active goal." : "Continue working on the task.")
+                    : null
+            };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -363,14 +395,19 @@ public sealed class MafAgentRuntime : IAgentRuntime
         {
             _logger?.LogWarning("[{CorrelationId}] MAF model selection failed: {Message}", turnCtx.CorrelationId, ex.Message);
             LogTurnComplete(turnCtx);
-            return ex.Message;
+            return new Agent.AgentTurnResult
+            {
+                Text = ex.Message,
+                ShouldContinue = false,
+                StopReason = Agent.AgentTurnStopReason.Failed
+            };
         }
         catch (Exception ex)
         {
             _metrics.IncrementLlmErrors();
             _logger?.LogError(ex, "[{CorrelationId}] MAF orchestration failed", turnCtx.CorrelationId);
             LogTurnComplete(turnCtx);
-            return "Sorry, I'm having trouble reaching my AI provider right now. Please try again shortly.";
+            return Agent.AgentTurnResult.Completed("Sorry, I'm having trouble reaching my AI provider right now. Please try again shortly.");
         }
         finally
         {

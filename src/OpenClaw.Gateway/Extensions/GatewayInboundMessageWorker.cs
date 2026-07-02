@@ -577,11 +577,13 @@ internal sealed class GatewayInboundMessageWorker
                                 if (!string.IsNullOrWhiteSpace(effectiveResponseMode))
                                     session.ResponseMode = effectiveResponseMode!;
 
-                                Background.BackgroundExecutionLimiter.Releaser? streamLimiterReleaser = null;
                                 try
                                 {
-                                    streamLimiterReleaser = backgroundLimiter is not null
+                                    var streamLimiterReleaser = backgroundLimiter is not null
                                         ? await backgroundLimiter.TryAcquireAsync(msg, processingCt)
+                                        : null;
+                                    using var streamLimiterScope = streamLimiterReleaser is { } acquiredStreamLimiter
+                                        ? (IDisposable)acquiredStreamLimiter
                                         : null;
 
                                     if (streamLimiterReleaser is null && Background.BackgroundExecutionLimiter.IsBackgroundContinuation(msg))
@@ -617,7 +619,6 @@ internal sealed class GatewayInboundMessageWorker
                                 }
                                 finally
                                 {
-                                    streamLimiterReleaser?.Dispose();
                                     session.ResponseMode = originalResponseMode;
                                 }
                                 await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
@@ -696,11 +697,13 @@ internal sealed class GatewayInboundMessageWorker
                                 var responseText = string.Empty;
 
                                 AgentTurnResult turnResult;
-                                Background.BackgroundExecutionLimiter.Releaser? limiterReleaser = null;
                                 try
                                 {
-                                    limiterReleaser = backgroundLimiter is not null
+                                    var limiterReleaser = backgroundLimiter is not null
                                         ? await backgroundLimiter.TryAcquireAsync(msg, processingCt)
+                                        : null;
+                                    using var limiterScope = limiterReleaser is { } acquiredLimiter
+                                        ? (IDisposable)acquiredLimiter
                                         : null;
 
                                     if (limiterReleaser is null && Background.BackgroundExecutionLimiter.IsBackgroundContinuation(msg))
@@ -720,7 +723,6 @@ internal sealed class GatewayInboundMessageWorker
                                 }
                                 finally
                                 {
-                                    limiterReleaser?.Dispose();
                                     session.ResponseMode = originalResponseMode;
                                 }
 

@@ -35,9 +35,8 @@ public sealed class BackgroundExecutionLimiterTests
     {
         await using var limiter = new BackgroundExecutionLimiter(NewConfig());
         var releaser = await limiter.TryAcquireAsync(NonBackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(releaser);
-        // No-op releaser should not throw
-        releaser.Value.Dispose();
+        var acquired = AssertAcquired(releaser);
+        acquired.Dispose();
     }
 
     [Fact]
@@ -45,8 +44,8 @@ public sealed class BackgroundExecutionLimiterTests
     {
         await using var limiter = new BackgroundExecutionLimiter(NewConfig(maxConcurrent: 1));
         var releaser = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(releaser);
-        releaser.Value.Dispose();
+        var acquired = AssertAcquired(releaser);
+        acquired.Dispose();
     }
 
     [Fact]
@@ -54,12 +53,12 @@ public sealed class BackgroundExecutionLimiterTests
     {
         await using var limiter = new BackgroundExecutionLimiter(NewConfig(maxConcurrent: 1));
         var first = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(first);
+        var acquiredFirst = AssertAcquired(first);
 
         var second = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
         Assert.Null(second);
 
-        first.Value.Dispose();
+        acquiredFirst.Dispose();
     }
 
     [Fact]
@@ -67,15 +66,13 @@ public sealed class BackgroundExecutionLimiterTests
     {
         await using var limiter = new BackgroundExecutionLimiter(NewConfig(maxConcurrent: 1));
         var first = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(first);
+        var acquiredFirst = AssertAcquired(first);
 
-        // Release permit
-        first.Value.Dispose();
+        acquiredFirst.Dispose();
 
-        // Should be able to acquire again
         var second = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(second);
-        second.Value.Dispose();
+        var acquiredSecond = AssertAcquired(second);
+        acquiredSecond.Dispose();
     }
 
     [Fact]
@@ -83,8 +80,8 @@ public sealed class BackgroundExecutionLimiterTests
     {
         var limiter = new BackgroundExecutionLimiter(NewConfig());
         var releaser = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(releaser);
-        releaser.Value.Dispose();
+        var acquired = AssertAcquired(releaser);
+        acquired.Dispose();
         await limiter.DisposeAsync();
     }
 
@@ -94,14 +91,14 @@ public sealed class BackgroundExecutionLimiterTests
         await using var limiter = new BackgroundExecutionLimiter(NewConfig(maxConcurrent: 2));
         var r1 = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
         var r2 = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
-        Assert.NotNull(r1);
-        Assert.NotNull(r2);
+        var releaser1 = AssertAcquired(r1);
+        var releaser2 = AssertAcquired(r2);
 
         var r3 = await limiter.TryAcquireAsync(BackgroundMsg(), TestContext.Current.CancellationToken);
         Assert.Null(r3);
 
-        r1.Value.Dispose();
-        r2.Value.Dispose();
+        releaser1.Dispose();
+        releaser2.Dispose();
     }
 
     [Fact]
@@ -136,5 +133,11 @@ public sealed class BackgroundExecutionLimiterTests
     public void IsBackgroundContinuation_RejectsNormalMessage()
     {
         Assert.False(BackgroundExecutionLimiter.IsBackgroundContinuation(NonBackgroundMsg()));
+    }
+
+    private static BackgroundExecutionLimiter.Releaser AssertAcquired(BackgroundExecutionLimiter.Releaser? releaser)
+    {
+        Assert.True(releaser.HasValue);
+        return releaser.GetValueOrDefault();
     }
 }

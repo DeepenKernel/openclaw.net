@@ -13,7 +13,9 @@ using OpenClaw.Core.Pipeline;
 using OpenClaw.Core.Security;
 using OpenClaw.Core.Sessions;
 using OpenClaw.Core.Skills;
+using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Extensions;
+using OpenClaw.Gateway.Mcp;
 using OpenClaw.Gateway.Models;
 using OpenClaw.Gateway.Tools;
 using OpenClaw.Plugins.Payment;
@@ -24,6 +26,23 @@ namespace OpenClaw.Gateway.Composition;
 
 internal static partial class RuntimeInitializationExtensions
 {
+    private static McpWorkspaceWatcherService StartMcpWorkspaceWatcher(
+        WebApplication app,
+        RuntimeServices services,
+        GatewayStartupContext startup,
+        IAgentRuntime agentRuntime)
+    {
+        var watcher = new McpWorkspaceWatcherService(
+            services.McpRegistry,
+            agentRuntime,
+            startup.WorkspacePath,
+            app.Services.GetRequiredService<ILogger<McpWorkspaceWatcherService>>(),
+            app.Services.GetRequiredService<McpConfigStore>());
+        app.Services.GetRequiredService<McpWatcherHolder>().Watcher = watcher;
+        watcher.Start(app.Lifetime.ApplicationStopping);
+        return watcher;
+    }
+
     private static GatewayAppRuntime CreateGatewayRuntime(
         GatewayConfig config,
         RuntimeServices services,

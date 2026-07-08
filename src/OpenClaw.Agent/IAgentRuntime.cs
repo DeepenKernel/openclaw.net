@@ -44,4 +44,9 @@ public interface IAgentRuntime
         CancellationToken ct,
         ToolApprovalCallback? approvalCallback = null,
         string? correlationId = null);
+
+    Task ApplyMcpToolChangesAsync(
+        IReadOnlyList<OpenClaw.Core.Abstractions.ITool> toAdd,
+        IReadOnlyList<string> toRemove,
+        CancellationToken ct = default) => Task.CompletedTask;
 }

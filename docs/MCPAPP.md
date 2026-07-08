@@ -50,6 +50,10 @@ The important detail is that browser UIs should connect to `/apps/mcp/{appId}`, 
 
 This is the bridge that lets a rich MCP App UI and the Agent collaborate against the same App session instead of creating two unrelated MCP connections.
 
+### Not the Same as Workspace MCP Server Hot Reload
+
+`/admin/workspace/mcp` is a separate admin surface for ordinary `Plugins:Mcp` server definitions. It persists workspace MCP server JSON and hot-reloads the standard MCP plugin tool surface. It does **not** manage manifest-discovered MCP Apps or replace the `/apps/*` host/proxy routes described in this document.
+
 ### Browser Compatibility Notes
 
 - `tools/list` on `/apps/mcp/{appId}` is intentionally a raw pass-through. App-only tools still appear there because the browser host may need them.

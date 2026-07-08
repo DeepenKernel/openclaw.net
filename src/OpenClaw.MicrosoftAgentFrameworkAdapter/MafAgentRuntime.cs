@@ -58,8 +58,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly string? _memoryRecallPrefix;
     private readonly bool _backgroundExecutionEnabled;
     private readonly object _skillGate = new();
-    private readonly IList<AITool> _mafTools;
-    private readonly IReadOnlyDictionary<string, AITool> _mafToolsByName;
+    private IReadOnlyList<AITool> _mafTools;
+    private IReadOnlyDictionary<string, AITool> _mafToolsByName;
     private string _systemPrompt = string.Empty;
     private string[] _loadedSkillNames = [];
     private IReadOnlyList<SkillDefinition> _loadedSkills = [];
@@ -129,9 +129,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             context.ProviderUsage,
             telemetry,
             logger);
-        _mafTools = context.Tools
-            .Select(tool => (AITool)new MafToolAdapter(tool, _toolExecutor))
-            .ToArray();
+        _mafTools = BuildMafTools(context.Tools, _toolExecutor);
         _mafToolsByName = _mafTools.ToDictionary(tool => tool.Name, StringComparer.Ordinal);
 
         // Goal system: resolve IGoalService from DI (optional — Goal is a progressive enhancement)
@@ -190,6 +188,29 @@ public sealed class MafAgentRuntime : IAgentRuntime
             logger.LogInformation("No skills loaded for the Microsoft Agent Framework runtime.");
 
         return Task.FromResult<IReadOnlyList<string>>(LoadedSkillNames);
+    }
+
+    public Task ApplyMcpToolChangesAsync(
+        IReadOnlyList<ITool> toAdd,
+        IReadOnlyList<string> toRemove,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        _toolExecutor.ReplaceMcpTools(toAdd, toRemove);
+
+        var nextToolsByName = new Dictionary<string, AITool>(_mafToolsByName, StringComparer.Ordinal);
+        foreach (var name in toRemove)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+                nextToolsByName.Remove(name);
+        }
+
+        foreach (var tool in toAdd)
+            nextToolsByName[tool.Name] = new MafToolAdapter(tool, _toolExecutor);
+
+        _mafToolsByName = nextToolsByName;
+        _mafTools = nextToolsByName.Values.ToArray();
+        return Task.CompletedTask;
     }
 
     private static string ResolveCorrelationId(string? correlationId)
@@ -605,6 +626,13 @@ public sealed class MafAgentRuntime : IAgentRuntime
             .ToArray();
         return _agentFactory.Create(_chatClient, GetSystemPrompt(session, userMessage), tools);
     }
+
+    private static IReadOnlyList<AITool> BuildMafTools(
+        IReadOnlyList<ITool> tools,
+        OpenClawToolExecutor toolExecutor)
+        => tools
+            .Select(tool => (AITool)new MafToolAdapter(tool, toolExecutor))
+            .ToArray();
 
     private async Task<StreamingIterationResult> ProduceStreamingRunAsync(
         Session session,

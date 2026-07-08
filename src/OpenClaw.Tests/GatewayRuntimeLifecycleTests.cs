@@ -20,6 +20,7 @@ using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Composition;
 using OpenClaw.Gateway.Extensions;
 using OpenClaw.Gateway.Integrations;
+using OpenClaw.Gateway.Mcp;
 using OpenClaw.Gateway.Pipeline;
 using OpenClaw.Gateway.Tools;
 using OpenClaw.Payments.Core;
@@ -29,6 +30,68 @@ namespace OpenClaw.Tests;
 
 public sealed class GatewayRuntimeLifecycleTests
 {
+    [Fact]
+    public void WorkspaceMcpToolSwap_ReplacesDispatchTableWithoutRestart()
+    {
+        var toolA = Substitute.For<ITool>();
+        toolA.Name.Returns("workspace_tool_a");
+        toolA.Description.Returns("A");
+        toolA.ParameterSchema.Returns("{}");
+
+        var toolB = Substitute.For<ITool>();
+        toolB.Name.Returns("workspace_tool_b");
+        toolB.Description.Returns("B");
+        toolB.ParameterSchema.Returns("{}");
+
+        var executor = CreateToolExecutorForTests([toolA]);
+        executor.ReplaceMcpTools([toolB], ["workspace_tool_a"]);
+
+        Assert.False(executor.SupportsStreaming("workspace_tool_a"));
+        Assert.DoesNotContain(executor.GetToolDeclarations(CreateSession()), t => t.Name == "workspace_tool_a");
+        Assert.Contains(executor.GetToolDeclarations(CreateSession()), t => t.Name == "workspace_tool_b");
+    }
+
+    [Fact]
+    public async Task McpWorkspaceWatcherService_TriggerReload_AppliesToolChanges()
+    {
+        var root = CreateTempRoot();
+        Directory.CreateDirectory(root);
+        await using var registry = new McpServerToolRegistry(
+            new McpPluginsConfig
+            {
+                Enabled = false,
+                Servers = new Dictionary<string, McpServerConfig>(StringComparer.Ordinal)
+            },
+            NullLogger<McpServerToolRegistry>.Instance);
+        try
+        {
+            var runtime = Substitute.For<IAgentRuntime>();
+            var store = new McpConfigStore(root, NullLogger<McpConfigStore>.Instance);
+            await store.SaveAsync("""{"enabled":true,"servers":{}}""", TestContext.Current.CancellationToken);
+
+            using var service = new McpWorkspaceWatcherService(
+                registry,
+                runtime,
+                workspacePath: null,
+                NullLogger<McpWorkspaceWatcherService>.Instance,
+                store);
+
+            using var cts = new CancellationTokenSource();
+            service.Start(cts.Token);
+            service.TriggerReload();
+
+            await WaitForConditionAsync(
+                () => runtime.ReceivedCalls().Any(call =>
+                    string.Equals(call.GetMethodInfo().Name, nameof(IAgentRuntime.ApplyMcpToolChangesAsync), StringComparison.Ordinal)),
+                TimeSpan.FromSeconds(3),
+                TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(root);
+        }
+    }
+
     [Fact]
     public async Task GatewayRuntimeShutdownCoordinator_StopAsync_RunsRegisteredCleanupsInReverseOrderOnce()
     {
@@ -454,6 +517,22 @@ public sealed class GatewayRuntimeLifecycleTests
     private static string CreateTempRoot()
         => Path.Combine(Path.GetTempPath(), "openclaw-runtime-lifecycle-tests", Guid.NewGuid().ToString("N"));
 
+    private static OpenClawToolExecutor CreateToolExecutorForTests(IReadOnlyList<ITool> tools)
+        => new(
+            tools,
+            toolTimeoutSeconds: 30,
+            requireToolApproval: false,
+            approvalRequiredTools: [],
+            hooks: []);
+
+    private static Session CreateSession()
+        => new()
+        {
+            Id = "sess-toolswap",
+            ChannelId = "test-channel",
+            SenderId = "user1"
+        };
+
     private static async Task<IReadOnlyList<string>> WaitForCancellationAsync(
         CancellationToken ct,
         TaskCompletionSource reloadCanceled)
@@ -470,6 +549,24 @@ public sealed class GatewayRuntimeLifecycleTests
         return Array.Empty<string>();
     }
 
+    private static async Task WaitForConditionAsync(
+        Func<bool> condition,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (condition())
+                return;
+
+            await Task.Delay(50, ct);
+        }
+
+        throw new TimeoutException("Timed out waiting for condition.");
+    }
+
     private static void DeleteDirectoryIfPresent(string path)
     {
         try
@@ -484,4 +581,5 @@ public sealed class GatewayRuntimeLifecycleTests
         {
         }
     }
+
 }

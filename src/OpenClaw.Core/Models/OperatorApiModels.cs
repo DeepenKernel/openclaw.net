@@ -12,6 +12,14 @@ public sealed class MutationResponse
     public bool RestartRequired { get; init; }
 }
 
+public sealed class WorkspaceUploadResponse
+{
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public List<string>? Files { get; init; }
+    public int FileCount { get; init; }
+}
+
 public sealed class InputTokenComponentEstimate
 {
     public long SystemPrompt { get; init; }

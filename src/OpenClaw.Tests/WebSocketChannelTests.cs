@@ -182,6 +182,33 @@ public sealed class WebSocketChannelTests
     }
 
     [Fact]
+    public async Task HandleConnectionAsync_ForwardsAuthenticatedUserId()
+    {
+        var channel = new WebSocketChannel(new WebSocketConfig { MaxMessageBytes = 1024 });
+        var ws = new TestWebSocket();
+
+        ws.QueueReceiveText("hello");
+        ws.QueueClose();
+
+        InboundMessage? received = null;
+        channel.OnMessageReceived += (msg, _) =>
+        {
+            received = msg;
+            return ValueTask.CompletedTask;
+        };
+
+        await channel.HandleConnectionAsync(
+            ws,
+            "client",
+            IPAddress.Loopback,
+            TestContext.Current.CancellationToken,
+            authenticatedUserId: "acct-123");
+
+        Assert.NotNull(received);
+        Assert.Equal("acct-123", received!.AuthenticatedUserId);
+    }
+
+    [Fact]
     public async Task HandleConnectionAsync_RoutesCanvasReadyWithoutUserMessage()
     {
         var channel = new WebSocketChannel(new WebSocketConfig { MaxMessageBytes = 1024 });

@@ -451,7 +451,7 @@ internal static class WorkspaceFileEndpoints
             JsonElement? userConfig = null;
             if (rawJson is not null)
             {
-                try { userConfig = JsonSerializer.Deserialize<JsonElement>(rawJson); }
+                try { userConfig = JsonDocument.Parse(rawJson).RootElement; }
                 catch { userConfig = null; }
             }
 

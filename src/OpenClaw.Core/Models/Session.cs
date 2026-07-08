@@ -1665,6 +1665,8 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(WorkspaceUploadResponse))]
 [JsonSerializable(typeof(WorkspaceTreeEntry))]
 [JsonSerializable(typeof(WorkspaceTreeResponse))]
+[JsonSerializable(typeof(WorkspaceBrowseEntry))]
+[JsonSerializable(typeof(WorkspaceBrowseResponse))]
 [JsonSerializable(typeof(AgentRouteConfig))]
 [JsonSerializable(typeof(TailscaleConfig))]
 [JsonSerializable(typeof(GmailPubSubConfig))]

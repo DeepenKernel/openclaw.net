@@ -96,6 +96,64 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task DigitalEmployeeUpload_RejectsSkillExtractionThroughWorkspaceSymlink()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var workspace = CreateSafeTempDirectory("openclaw-digital-employee-workspace");
+        var outside = CreateSafeTempDirectory("openclaw-digital-employee-outside");
+        try
+        {
+            Directory.CreateDirectory(Path.Join(workspace, "skills"));
+            var linkedSkill = Path.Join(workspace, "skills", "linked-skill");
+            try
+            {
+                Directory.CreateSymbolicLink(linkedSkill, outside);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+            {
+                config.Tooling.WorkspaceRoot = workspace;
+            });
+            var (cookie, csrfToken) = await LoginAsync(harness.Client, harness.AuthToken);
+
+            using var archiveStream = new MemoryStream();
+            using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var entry = archive.CreateEntry("skills/linked-skill/SKILL.md");
+                await using var entryStream = entry.Open();
+                await using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+                await writer.WriteAsync("# escaped skill");
+            }
+
+            using var form = new MultipartFormDataContent();
+            using var fileContent = new ByteArrayContent(archiveStream.ToArray());
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+            form.Add(fileContent, "file", "employee.zip");
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/digital-employee/upload")
+            {
+                Content = form
+            };
+            request.Headers.Add("Cookie", cookie);
+            request.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+
+            var response = await harness.Client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.False(File.Exists(Path.Join(outside, "SKILL.md")));
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task AuthSession_BearerAndBrowserSessionFlow_Works()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);

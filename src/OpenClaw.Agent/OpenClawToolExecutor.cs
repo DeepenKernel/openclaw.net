@@ -131,11 +131,8 @@ public sealed class OpenClawToolExecutor
         {
             var nextTools = new Dictionary<string, ITool>(_toolsByName, StringComparer.Ordinal);
 
-            foreach (var name in toRemove)
-            {
-                if (!string.IsNullOrWhiteSpace(name))
-                    nextTools.Remove(name);
-            }
+            foreach (var name in toRemove.Where(static name => !string.IsNullOrWhiteSpace(name)))
+                nextTools.Remove(name);
 
             foreach (var tool in toAdd)
                 nextTools[tool.Name] = tool;

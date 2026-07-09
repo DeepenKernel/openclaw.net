@@ -104,12 +104,15 @@ internal sealed class McpWorkspaceWatcherService : IAsyncDisposable, IDisposable
     {
         while (await _reloadChannel.Reader.WaitToReadAsync(ct))
         {
+            var drainedReloadRequests = 0;
             while (_reloadChannel.Reader.TryRead(out _))
             {
+                drainedReloadRequests++;
             }
 
             try
             {
+                _logger.LogDebug("Drained {ReloadRequestCount} pending workspace MCP reload request(s).", drainedReloadRequests);
                 var servers = await _configStore.TryLoadServersAsync(ct);
                 if (servers is null && !string.IsNullOrWhiteSpace(_workspacePath))
                 {

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
@@ -506,17 +507,13 @@ public sealed class FeishuChannel : IChannelAdapter, IRestartableChannelAdapter
         if (msg.TryGetProperty("mentions", out var mentionsArr) &&
             mentionsArr.ValueKind == JsonValueKind.Array)
         {
-            var list = new List<string>();
-            foreach (var m in mentionsArr.EnumerateArray())
-            {
-                if (m.TryGetProperty("id", out var mentionId) &&
-                    mentionId.TryGetProperty("open_id", out var mOid))
-                {
-                    var mOpenId = mOid.GetString();
-                    if (mOpenId is not null)
-                        list.Add(mOpenId);
-                }
-            }
+            var list = mentionsArr
+                .EnumerateArray()
+                .Where(static m => m.TryGetProperty("id", out var mentionId) &&
+                                   mentionId.TryGetProperty("open_id", out _))
+                .Select(static m => m.GetProperty("id").GetProperty("open_id").GetString())
+                .OfType<string>()
+                .ToList();
             if (list.Count > 0)
                 mentions = [.. list];
         }
@@ -830,13 +827,11 @@ public sealed class FeishuChannel : IChannelAdapter, IRestartableChannelAdapter
             return string.Empty;
 
         var sb = new StringBuilder();
-        foreach (var para in content.EnumerateArray())
+        foreach (var para in content.EnumerateArray().Where(static para => para.ValueKind == JsonValueKind.Array))
         {
-            if (para.ValueKind != JsonValueKind.Array) continue;
-            foreach (var item in para.EnumerateArray())
+            foreach (var item in para.EnumerateArray().Where(static item => item.TryGetProperty("tag", out var tag) &&
+                                                                            string.Equals(tag.GetString(), "img", StringComparison.Ordinal)))
             {
-                if (!item.TryGetProperty("tag", out var tag)) continue;
-                if (!string.Equals(tag.GetString(), "img", StringComparison.Ordinal)) continue;
                 if (!item.TryGetProperty("image_key", out var imgKeyProp)) continue;
                 var imgKey = imgKeyProp.GetString();
                 if (string.IsNullOrWhiteSpace(imgKey)) continue;
@@ -954,12 +949,11 @@ public sealed class FeishuChannel : IChannelAdapter, IRestartableChannelAdapter
         if (postElem.TryGetProperty("content", out var content) &&
             content.ValueKind == JsonValueKind.Array)
         {
-            foreach (var para in content.EnumerateArray())
+            foreach (var para in content.EnumerateArray().Where(static para => para.ValueKind == JsonValueKind.Array))
             {
-                if (para.ValueKind != JsonValueKind.Array) continue;
-                foreach (var item in para.EnumerateArray())
+                foreach (var item in para.EnumerateArray().Where(static item => item.TryGetProperty("tag", out _)))
                 {
-                    if (!item.TryGetProperty("tag", out var tag)) continue;
+                    item.TryGetProperty("tag", out var tag);
                     var tagName = tag.GetString();
 
                     if (string.Equals(tagName, "text", StringComparison.Ordinal) &&

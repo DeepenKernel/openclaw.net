@@ -621,10 +621,9 @@ public sealed class WeComChannel : IChannelAdapter, IRestartableChannelAdapter
 
     private void EvictExpiredDedup(long now)
     {
-        foreach (var key in _dedup.Keys.ToList())
+        foreach (var key in _dedup.Keys.ToList().Where(key => _dedup.TryGetValue(key, out var expMs) && expMs <= now))
         {
-            if (_dedup.TryGetValue(key, out var expMs) && expMs <= now)
-                _dedup.TryRemove(key, out _);
+            _dedup.TryRemove(key, out _);
         }
     }
 

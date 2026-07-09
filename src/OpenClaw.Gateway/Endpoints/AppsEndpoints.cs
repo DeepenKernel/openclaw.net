@@ -25,8 +25,8 @@ internal static class AppsEndpoints
             var registry = ctx.RequestServices.GetRequiredService<McpAppRegistry>();
             await registry.LoadAllAsync(ct);
 
-            var selectedApp = registry.Apps.FirstOrDefault(app => app.Client is not null && app.HasUi)
-                ?? registry.Apps.FirstOrDefault(app => app.Client is not null);
+            var selectedApp = registry.Apps.FirstOrDefault(candidate => candidate.Client is not null && candidate.HasUi)
+                ?? registry.Apps.FirstOrDefault(candidate => candidate.Client is not null);
 
             var payload = new JsonObject
             {

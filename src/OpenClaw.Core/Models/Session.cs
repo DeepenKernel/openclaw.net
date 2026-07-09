@@ -1426,7 +1426,6 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(OpenClaw.Core.Observability.ProviderUsageSnapshot))]
 [JsonSerializable(typeof(List<OpenClaw.Core.Observability.ProviderUsageSnapshot>))]
 [JsonSerializable(typeof(MutationResponse))]
-[JsonSerializable(typeof(WorkspaceUploadResponse))]
 [JsonSerializable(typeof(InputTokenComponentEstimate))]
 [JsonSerializable(typeof(ProviderPolicyRule))]
 [JsonSerializable(typeof(List<ProviderPolicyRule>))]

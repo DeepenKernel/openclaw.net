@@ -207,6 +207,7 @@ internal static partial class RuntimeInitializationExtensions
             app.Services.GetRequiredService<ILogger<SkillWatcherService>>(),
             skills => artifactRuntime.ReplaceSkills(skills));
         skillWatcher.Start(app.Lifetime.ApplicationStopping);
+        var mcpWatcher = StartMcpWorkspaceWatcher(app, services, startup, agentRuntime);
 
         await services.AutomationService.RefreshCacheAsync(app.Lifetime.ApplicationStopping);
         var cronScheduler = app.Services.GetRequiredService<CronScheduler>();
@@ -215,6 +216,7 @@ internal static partial class RuntimeInitializationExtensions
         var profile = app.Services.GetRequiredService<IRuntimeProfile>();
         var shutdownCoordinator = app.Services.GetRequiredService<GatewayRuntimeShutdownCoordinator>();
         shutdownCoordinator.RegisterAsyncCleanup("mcp registry", _ => services.McpRegistry.DisposeAsync());
+        shutdownCoordinator.RegisterAsyncCleanup("mcp workspace watcher", _ => mcpWatcher.DisposeAsync());
         shutdownCoordinator.RegisterAsyncCleanup("mcpapp registry", _ => services.McpAppRegistry.DisposeAsync());
         mcpAppStartupCleanup.Cancel();
         var runtime = CreateGatewayRuntime(

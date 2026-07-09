@@ -49,6 +49,111 @@ namespace OpenClaw.Tests;
 public sealed class GatewayAdminEndpointTests
 {
     [Fact]
+    public async Task WorkspaceMcp_AdminApi_RequiresAuth_AndPersistsConfig()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+
+        var anonymous = await harness.Client.GetAsync("/admin/workspace/mcp");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+
+        using var getRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/workspace/mcp");
+        getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var getResponse = await harness.Client.SendAsync(getRequest);
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        using var initialPayload = await ReadJsonAsync(getResponse);
+        Assert.True(initialPayload.RootElement.TryGetProperty("builtin", out _));
+        Assert.True(initialPayload.RootElement.TryGetProperty("user", out var initialUser));
+        Assert.Equal(JsonValueKind.Null, initialUser.ValueKind);
+        Assert.False(initialPayload.RootElement.TryGetProperty("builtIn", out _));
+        Assert.False(initialPayload.RootElement.TryGetProperty("persistedRaw", out _));
+
+        var (cookie, csrfToken) = await LoginAsync(harness.Client, harness.AuthToken);
+        using var putRequest = new HttpRequestMessage(HttpMethod.Put, "/admin/workspace/mcp")
+        {
+            Content = JsonContent("""{"enabled":true,"servers":{}}""")
+        };
+        putRequest.Headers.Add("Cookie", cookie);
+        putRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+
+        var putResponse = await harness.Client.SendAsync(putRequest);
+        Assert.Equal(HttpStatusCode.OK, putResponse.StatusCode);
+        using var putPayload = await ReadJsonAsync(putResponse);
+        Assert.True(putPayload.RootElement.GetProperty("success").GetBoolean());
+        Assert.False(putPayload.RootElement.TryGetProperty("message", out _));
+        Assert.False(putPayload.RootElement.TryGetProperty("restartRequired", out _));
+        using var refreshedGetRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/workspace/mcp");
+        refreshedGetRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var refreshedGet = await harness.Client.SendAsync(refreshedGetRequest);
+        refreshedGet.EnsureSuccessStatusCode();
+        using var refreshedPayload = await ReadJsonAsync(refreshedGet);
+        Assert.True(refreshedPayload.RootElement.TryGetProperty("builtin", out _));
+        Assert.True(refreshedPayload.RootElement.TryGetProperty("user", out var userConfig));
+        Assert.Equal(JsonValueKind.Object, userConfig.ValueKind);
+        Assert.True(userConfig.GetProperty("enabled").GetBoolean());
+        Assert.Empty(userConfig.GetProperty("servers").EnumerateObject());
+        Assert.False(refreshedPayload.RootElement.TryGetProperty("builtIn", out _));
+        Assert.False(refreshedPayload.RootElement.TryGetProperty("persistedRaw", out _));
+    }
+
+    [Fact]
+    public async Task DigitalEmployeeUpload_RejectsSkillExtractionThroughWorkspaceSymlink()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var workspace = CreateSafeTempDirectory("openclaw-digital-employee-workspace");
+        var outside = CreateSafeTempDirectory("openclaw-digital-employee-outside");
+        try
+        {
+            Directory.CreateDirectory(Path.Join(workspace, "skills"));
+            var linkedSkill = Path.Join(workspace, "skills", "linked-skill");
+            try
+            {
+                Directory.CreateSymbolicLink(linkedSkill, outside);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>
+            {
+                config.Tooling.WorkspaceRoot = workspace;
+            });
+            var (cookie, csrfToken) = await LoginAsync(harness.Client, harness.AuthToken);
+
+            using var archiveStream = new MemoryStream();
+            using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var entry = archive.CreateEntry("skills/linked-skill/SKILL.md");
+                await using var entryStream = entry.Open();
+                await using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+                await writer.WriteAsync("# escaped skill");
+            }
+
+            using var form = new MultipartFormDataContent();
+            using var fileContent = new ByteArrayContent(archiveStream.ToArray());
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+            form.Add(fileContent, "file", "employee.zip");
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/digital-employee/upload")
+            {
+                Content = form
+            };
+            request.Headers.Add("Cookie", cookie);
+            request.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+
+            var response = await harness.Client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.False(File.Exists(Path.Join(outside, "SKILL.md")));
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task AuthSession_BearerAndBrowserSessionFlow_Works()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);

@@ -22,6 +22,13 @@ public sealed class Session
     public required string Id { get; init; }
     public required string ChannelId { get; init; }
     public required string SenderId { get; init; }
+
+    /// <summary>
+    /// Authenticated user identity from the identity provider when the channel can establish one.
+    /// Falls back to <see cref="SenderId"/> for anonymous or non-authenticated channels.
+    /// </summary>
+    public string? AuthenticatedUserId { get; set; }
+
     public StableSessionBindingInfo? StableSessionBinding { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastActiveAt { get; set; } = DateTimeOffset.UtcNow;
@@ -1649,7 +1656,16 @@ public sealed class SessionDelegationChildSummary
 [JsonSerializable(typeof(SlackChannelConfig))]
 [JsonSerializable(typeof(DiscordChannelConfig))]
 [JsonSerializable(typeof(SignalChannelConfig))]
+[JsonSerializable(typeof(FeishuChannelConfig))]
+[JsonSerializable(typeof(DingTalkChannelConfig))]
+[JsonSerializable(typeof(WeComChannelConfig))]
 [JsonSerializable(typeof(RoutingConfig))]
+[JsonSerializable(typeof(DigitalEmployeeUploadResponse))]
+[JsonSerializable(typeof(WorkspaceUploadResponse))]
+[JsonSerializable(typeof(WorkspaceTreeEntry))]
+[JsonSerializable(typeof(WorkspaceTreeResponse))]
+[JsonSerializable(typeof(WorkspaceBrowseEntry))]
+[JsonSerializable(typeof(WorkspaceBrowseResponse))]
 [JsonSerializable(typeof(AgentRouteConfig))]
 [JsonSerializable(typeof(TailscaleConfig))]
 [JsonSerializable(typeof(GmailPubSubConfig))]

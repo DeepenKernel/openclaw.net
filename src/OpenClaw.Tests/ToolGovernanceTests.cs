@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Agent;
@@ -295,7 +296,7 @@ public sealed class ToolGovernanceTests
     private static HttpResponseMessage CreateOkResponse(string json)
         => new(HttpStatusCode.OK)
         {
-            Content = new StringContent(json)
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
 
     private static HttpSidecarToolGovernanceService CreateTimedOutSidecarService(ToolGovernanceConfig config)

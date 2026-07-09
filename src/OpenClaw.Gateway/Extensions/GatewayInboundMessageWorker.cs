@@ -363,6 +363,13 @@ internal sealed class GatewayInboundMessageWorker
 
                             sessionLock = await sessionManager.AcquireSessionLockAsync(session.Id, processingCt);
 
+                            if (!string.IsNullOrWhiteSpace(msg.AuthenticatedUserId) &&
+                                !string.Equals(session.AuthenticatedUserId, msg.AuthenticatedUserId, StringComparison.Ordinal))
+                            {
+                                session.AuthenticatedUserId = msg.AuthenticatedUserId;
+                                await sessionManager.PersistAsync(session, processingCt, sessionLockHeld: true);
+                            }
+
                             if (automationService is not null && !string.IsNullOrWhiteSpace(msg.CronJobName))
                             {
                                 automation = await automationService.GetAsync(msg.CronJobName, processingCt);

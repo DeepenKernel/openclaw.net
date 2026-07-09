@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using OpenClaw.Core.Security;
@@ -17,17 +18,22 @@ internal static class WebSocketEndpoints
     {
         app.Map("/ws", async (HttpContext ctx) =>
         {
-            if (!TryValidateWebSocketRequest(ctx, startup, runtime, bucket: "websocket"))
+            if (!TryValidateWebSocketRequest(ctx, startup, runtime, bucket: "websocket", out var authenticatedUserId))
                 return;
 
             var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var clientId = ctx.Connection.Id;
-            await runtime.WebSocketChannel.HandleConnectionAsync(ws, clientId, ctx.Connection.RemoteIpAddress, ctx.RequestAborted);
+            await runtime.WebSocketChannel.HandleConnectionAsync(
+                ws,
+                clientId,
+                ctx.Connection.RemoteIpAddress,
+                ctx.RequestAborted,
+                authenticatedUserId: authenticatedUserId);
         });
 
         app.Map("/ws/live", async (HttpContext ctx) =>
         {
-            if (!TryValidateWebSocketRequest(ctx, startup, runtime, bucket: "websocket_live"))
+            if (!TryValidateWebSocketRequest(ctx, startup, runtime, bucket: "websocket_live", out _))
                 return;
 
             var ws = await ctx.WebSockets.AcceptWebSocketAsync();
@@ -64,8 +70,11 @@ internal static class WebSocketEndpoints
         HttpContext ctx,
         GatewayStartupContext startup,
         GatewayAppRuntime runtime,
-        string bucket)
+        string bucket,
+        out string? authenticatedUserId)
     {
+        authenticatedUserId = null;
+
         if (!ctx.WebSockets.IsWebSocketRequest)
         {
             ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -78,7 +87,7 @@ internal static class WebSocketEndpoints
             return false;
         }
 
-        if (startup.IsNonLoopbackBind && !IsAuthorizedTokenRequest(ctx, startup))
+        if (startup.IsNonLoopbackBind && !TryResolveAuthorizedUserIdForWebSocket(ctx, startup, out authenticatedUserId))
         {
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return false;
@@ -93,28 +102,27 @@ internal static class WebSocketEndpoints
         return true;
     }
 
-    private static bool IsAuthorizedTokenRequest(HttpContext ctx, GatewayStartupContext startup)
+    internal static bool TryResolveAuthorizedUserIdForWebSocket(HttpContext ctx, GatewayStartupContext startup, out string? authenticatedUserId)
     {
+        authenticatedUserId = null;
+
         if (!startup.IsNonLoopbackBind)
             return true;
 
-        var token = GatewaySecurity.GetToken(ctx, startup.Config.Security.AllowQueryStringToken);
-        if (string.IsNullOrWhiteSpace(token))
-            return false;
-
-        var policy = ctx.RequestServices.GetService<OrganizationPolicyService>()?.GetSnapshot() ?? new OrganizationPolicySnapshot();
-        if (policy.BootstrapTokenEnabled &&
-            policy.AllowedAuthModes.Any(mode => string.Equals(mode, OrganizationAuthModeNames.BootstrapToken, StringComparison.OrdinalIgnoreCase)) &&
-            !string.IsNullOrWhiteSpace(startup.Config.AuthToken) &&
-            GatewaySecurity.IsTokenValid(token, startup.Config.AuthToken))
+        if (ctx.User.Identity?.IsAuthenticated == true)
         {
-            return true;
+            authenticatedUserId = (ctx.User.FindFirst(ClaimTypes.NameIdentifier) ?? ctx.User.FindFirst("sub"))?.Value;
+            if (!string.IsNullOrWhiteSpace(authenticatedUserId))
+                return true;
         }
 
-        var operatorAccounts = ctx.RequestServices.GetService<OperatorAccountService>();
-        return operatorAccounts is not null &&
-               policy.AllowedAuthModes.Any(mode => string.Equals(mode, OrganizationAuthModeNames.AccountToken, StringComparison.OrdinalIgnoreCase)) &&
-               operatorAccounts.TryAuthenticateToken(token, out _);
+        var browserSessions = ctx.RequestServices.GetRequiredService<BrowserSessionAuthService>();
+        var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: false);
+        if (!auth.IsAuthorized)
+            return false;
+
+        authenticatedUserId = auth.AccountId;
+        return true;
     }
 
     private static bool IsOriginAllowed(HttpContext ctx, GatewayAppRuntime runtime)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -11,46 +12,52 @@ public sealed class McpNativeTool(
     string localName,
     string remoteName,
     string description,
-    string parameterSchema) : ITool
+    string parameterSchema,
+    bool suppressStructuredContent = false) : IToolWithContext
 {
     public string Name => localName;
     public string Description => description;
     public string ParameterSchema => parameterSchema;
 
     public async ValueTask<string> ExecuteAsync(string argumentsJson, CancellationToken ct)
+        => await ExecuteCoreAsync(argumentsJson, context: null, ct);
+
+    public async ValueTask<string> ExecuteAsync(string argumentsJson, ToolExecutionContext context, CancellationToken ct)
+        => await ExecuteCoreAsync(argumentsJson, context, ct);
+
+    private async ValueTask<string> ExecuteCoreAsync(string argumentsJson, ToolExecutionContext? context, CancellationToken ct)
     {
         try
         {
             using var argsDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
             if (argsDoc.RootElement.ValueKind != JsonValueKind.Object)
                 return $"Error: Invalid JSON arguments for MCP tool '{localName}': JSON root must be an object.";
-            var argsDict = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+            var argsDict = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             foreach (var prop in argsDoc.RootElement.EnumerateObject())
+                argsDict[prop.Name] = prop.Value.Clone();
+
+            JsonObject? meta = null;
+            if (context is not null)
             {
-                object? value = null;
-                var v = prop.Value;
-                switch (v.ValueKind)
+                meta = new JsonObject
                 {
-                    case JsonValueKind.String:
-                        value = v.GetString();
-                        break;
-                    case JsonValueKind.Number:
-                        value = v.Clone();
-                        break;
-                    case JsonValueKind.True:
-                    case JsonValueKind.False:
-                        value = v.GetBoolean();
-                        break;
-                    case JsonValueKind.Null:
-                        value = null;
-                        break;
-                    default:
-                        value = v.Clone();
-                        break;
-                }
-                argsDict[prop.Name] = value;
+                    ["userId"] = JsonValue.Create(context.Session.AuthenticatedUserId ?? context.Session.SenderId),
+                    ["sessionId"] = JsonValue.Create(context.Session.Id)
+                };
             }
-            var response = await client.CallToolAsync(remoteName, argsDict, progress: null, cancellationToken: ct);
+
+            var callParams = new CallToolRequestParams
+            {
+                Name = remoteName,
+                Arguments = argsDict,
+                Meta = meta
+            };
+
+            var response = await client.SendRequestAsync<CallToolRequestParams, CallToolResult>(
+                RequestMethods.ToolsCall,
+                callParams,
+                cancellationToken: ct);
             var text = FormatResponseContent(response);
             var isError = response.IsError ?? false;
             return isError ? $"Error: {text}" : text;
@@ -69,7 +76,7 @@ public sealed class McpNativeTool(
         }
     }
 
-    private static string FormatResponseContent(CallToolResult response)
+    private string FormatResponseContent(CallToolResult response)
     {
         var parts = new List<string>();
 
@@ -89,7 +96,8 @@ public sealed class McpNativeTool(
             }
         }
 
-        if (response.StructuredContent is { } structuredContent &&
+        if (!suppressStructuredContent &&
+            response.StructuredContent is { } structuredContent &&
             structuredContent.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
         {
             parts.Add(structuredContent.GetRawText());

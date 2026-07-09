@@ -250,6 +250,16 @@ public sealed class AgentRuntime : IAgentRuntime
         return Task.FromResult<IReadOnlyList<string>>(LoadedSkillNames);
     }
 
+    public Task ApplyMcpToolChangesAsync(
+        IReadOnlyList<ITool> toAdd,
+        IReadOnlyList<string> toRemove,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        _toolExecutor.ReplaceMcpTools(toAdd, toRemove);
+        return Task.CompletedTask;
+    }
+
     /// <summary>
     /// Exposes the circuit breaker state for health/metrics endpoints.
     /// </summary>

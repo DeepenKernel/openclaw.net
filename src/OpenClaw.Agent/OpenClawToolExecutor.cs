@@ -30,8 +30,9 @@ public sealed class ToolExecutionResult
 
 public sealed class OpenClawToolExecutor
 {
-    private readonly Dictionary<string, ITool> _toolsByName;
-    private readonly AITool[] _toolDeclarations;
+    private Dictionary<string, ITool> _toolsByName;
+    private AITool[] _toolDeclarations;
+    private readonly object _toolsMutationLock = new();
     private readonly int _toolTimeoutSeconds;
     private readonly bool _requireToolApproval;
     private readonly HashSet<string> _approvalRequiredTools;
@@ -120,6 +121,29 @@ public sealed class OpenClawToolExecutor
 
     public bool SupportsStreaming(string toolName)
         => _toolsByName.TryGetValue(toolName, out var tool) && tool is IStreamingTool;
+
+    public void ReplaceMcpTools(IReadOnlyList<ITool> toAdd, IReadOnlyList<string> toRemove)
+    {
+        ArgumentNullException.ThrowIfNull(toAdd);
+        ArgumentNullException.ThrowIfNull(toRemove);
+
+        lock (_toolsMutationLock)
+        {
+            var nextTools = new Dictionary<string, ITool>(_toolsByName, StringComparer.Ordinal);
+
+            foreach (var name in toRemove.Where(static name => !string.IsNullOrWhiteSpace(name)))
+                nextTools.Remove(name);
+
+            foreach (var tool in toAdd)
+                nextTools[tool.Name] = tool;
+
+            _toolsByName = nextTools;
+            _toolDeclarations = nextTools.Values
+                .Select(CreateDeclaration)
+                .Cast<AITool>()
+                .ToArray();
+        }
+    }
 
     public async Task<ToolExecutionResult> ExecuteAsync(
         FunctionCallContent call,

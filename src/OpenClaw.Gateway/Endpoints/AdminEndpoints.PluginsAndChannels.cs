@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using System.Globalization;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,6 +21,7 @@ using OpenClaw.Core.Validation;
 using OpenClaw.Gateway;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Composition;
+using OpenClaw.Gateway.Mcp;
 using OpenClaw.Gateway.Models;
 using QRCoder;
 
@@ -36,6 +38,9 @@ internal static partial class AdminEndpoints
         var pluginAdminSettings = services.PluginAdminSettings;
         var facade = services.Facade;
         var operations = services.Operations;
+        var mcpConfigStore = app.Services.GetService<McpConfigStore>()
+            ?? new McpConfigStore(startup.Config.Memory.StoragePath, NullLogger<McpConfigStore>.Instance);
+        var mcpWatcherHolder = app.Services.GetService<McpWatcherHolder>() ?? new McpWatcherHolder();
 
         app.MapGet("/admin/plugins", (HttpContext ctx) =>
         {
@@ -257,6 +262,84 @@ internal static partial class AdminEndpoints
             RecordOperatorAudit(ctx, operations, auth, "plugin_clear_quarantine", id, $"Cleared quarantine for plugin '{id}'.", success: true, before: null, after: state);
             return Results.Json(new MutationResponse { Success = true, Message = "Plugin quarantine cleared.", RestartRequired = true }, CoreJsonContext.Default.MutationResponse);
         });
+
+        app.MapGet("/admin/workspace/mcp", async (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.workspace.mcp");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var persistedRaw = await mcpConfigStore.TryLoadRawAsync(ctx.RequestAborted);
+            JsonNode? userConfig = null;
+            if (!string.IsNullOrWhiteSpace(persistedRaw))
+            {
+                try
+                {
+                    userConfig = JsonNode.Parse(persistedRaw);
+                }
+                catch (JsonException)
+                {
+                    userConfig = null;
+                }
+            }
+
+            var payload = new JsonObject
+            {
+                ["builtin"] = BuildSanitizedBuiltInMcpConfig(startup.Config.Plugins.Mcp),
+                ["user"] = userConfig
+            };
+
+            return Results.Content(payload.ToJsonString(), "application/json");
+        });
+
+        app.MapPut("/admin/workspace/mcp", async (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: true, endpointScope: "admin.workspace.mcp.mutate");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+            var auth = authResult.Authorization!;
+
+            using var reader = new StreamReader(ctx.Request.Body, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            var raw = await reader.ReadToEndAsync(ctx.RequestAborted);
+            if (string.IsNullOrWhiteSpace(raw))
+                return Results.Json(
+                    new WorkspaceUploadResponse { Success = false, Error = "Request body is required." },
+                    CoreJsonContext.Default.WorkspaceUploadResponse,
+                    statusCode: StatusCodes.Status400BadRequest);
+
+            try
+            {
+                using var _ = JsonDocument.Parse(raw);
+            }
+            catch (JsonException ex)
+            {
+                return Results.Json(
+                    new WorkspaceUploadResponse
+                    {
+                        Success = false,
+                        Error = $"Invalid JSON: {ex.Message}"
+                    },
+                    CoreJsonContext.Default.WorkspaceUploadResponse,
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            await mcpConfigStore.SaveAsync(raw, ctx.RequestAborted);
+            mcpWatcherHolder.Watcher?.TriggerReload();
+            RecordOperatorAudit(
+                ctx,
+                operations,
+                auth,
+                "workspace_mcp_update",
+                "mcp.json",
+                "Updated workspace MCP configuration.",
+                success: true,
+                before: null,
+                after: null);
+
+            return Results.Json(
+                new WorkspaceUploadResponse { Success = true },
+                CoreJsonContext.Default.WorkspaceUploadResponse);
+        });
         // ── Channel Auth Events ──────────────────────────────────────
         var authEventStore = runtime.ChannelAuthEvents;
 
@@ -453,5 +536,42 @@ internal static partial class AdminEndpoints
             var response = BuildWhatsAppSetupResponse(startup, runtime, adminSettings, pluginAdminSettings, message: "WhatsApp channel restarted.");
             return Results.Json(response, CoreJsonContext.Default.WhatsAppSetupResponse);
         });
+    }
+
+    private static JsonObject BuildSanitizedBuiltInMcpConfig(McpPluginsConfig config)
+    {
+        var servers = new JsonObject();
+        foreach (var (serverId, server) in config.Servers)
+        {
+            var sanitizedHeaders = new JsonObject();
+            foreach (var (headerName, value) in server.Headers)
+            {
+                sanitizedHeaders[headerName] = new JsonObject
+                {
+                    ["hasToken"] = !string.IsNullOrWhiteSpace(value)
+                };
+            }
+
+            servers[serverId] = new JsonObject
+            {
+                ["enabled"] = server.Enabled,
+                ["name"] = server.Name,
+                ["transport"] = server.Transport,
+                ["command"] = server.Command,
+                ["arguments"] = new JsonArray(server.Arguments.Select(arg => JsonValue.Create(arg)).ToArray()),
+                ["workingDirectory"] = server.WorkingDirectory,
+                ["url"] = server.Url,
+                ["toolNamePrefix"] = server.ToolNamePrefix,
+                ["startupTimeoutSeconds"] = server.StartupTimeoutSeconds,
+                ["requestTimeoutSeconds"] = server.RequestTimeoutSeconds,
+                ["headers"] = sanitizedHeaders
+            };
+        }
+
+        return new JsonObject
+        {
+            ["enabled"] = config.Enabled,
+            ["servers"] = servers
+        };
     }
 }

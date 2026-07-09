@@ -87,6 +87,7 @@ internal static class WorkspaceFileEndpoints
                 }
 
                 var extracted = new List<string>();
+                long totalUncompressed = 0;
                 try
                 {
                     Directory.CreateDirectory(targetDir);
@@ -102,6 +103,14 @@ internal static class WorkspaceFileEndpoints
                         var fullDestDirPath = Path.GetFullPath(targetDir + Path.DirectorySeparatorChar);
                         if (!entryFull.StartsWith(fullDestDirPath, StringComparison.Ordinal))
                             continue; // silently skip traversal attempts
+
+                        // Enforce quota on expanded (uncompressed) contents.
+                        totalUncompressed += entry.Length;
+                        if (totalUncompressed > MaxUploadBytes)
+                            return Results.Json(
+                                new WorkspaceUploadResponse { Success = false, Error = $"Expanded archive exceeds upload limit ({MaxUploadBytes / 1024 / 1024} MB)." },
+                                CoreJsonContext.Default.WorkspaceUploadResponse,
+                                statusCode: StatusCodes.Status400BadRequest);
 
                         Directory.CreateDirectory(Path.GetDirectoryName(entryFull)!);
                         await using var outStream = new FileStream(entryFull, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 65536, useAsync: true);
@@ -367,7 +376,7 @@ internal static class WorkspaceFileEndpoints
                     CoreJsonContext.Default.WorkspaceUploadResponse,
                     statusCode: StatusCodes.Status400BadRequest);
 
-            // Directory → build ZIP in-memory and stream it.
+            // Directory → stream ZIP directly to response (avoids buffering full archive in memory).
             if (Directory.Exists(targetPath))
             {
                 var dirName = Path.GetFileName(targetPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -375,31 +384,24 @@ internal static class WorkspaceFileEndpoints
                     dirName = "workspace";
                 var zipName = $"{dirName}.zip";
 
-                var ms = new MemoryStream();
-                try
+                ctx.Response.ContentType = "application/zip";
+                ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{zipName}\"";
+                ctx.Response.StatusCode = StatusCodes.Status200OK;
+
+                using (var zip = new ZipArchive(ctx.Response.Body, ZipArchiveMode.Create, leaveOpen: true))
                 {
-                    using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+                    foreach (var filePath in Directory.EnumerateFiles(targetPath, "*", SearchOption.AllDirectories))
                     {
-                        foreach (var filePath in Directory.EnumerateFiles(targetPath, "*", SearchOption.AllDirectories))
-                        {
-                            var entryName = Path.GetRelativePath(targetPath, filePath).Replace('\\', '/');
-                            var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
-                            await using var entryStream = entry.Open();
-                            await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 65536, useAsync: true);
-                            await fileStream.CopyToAsync(entryStream, ctx.RequestAborted);
-                        }
+                        ctx.RequestAborted.ThrowIfCancellationRequested();
+                        var entryName = Path.GetRelativePath(targetPath, filePath).Replace('\\', '/');
+                        var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+                        await using var entryStream = entry.Open();
+                        await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 65536, useAsync: true);
+                        await fileStream.CopyToAsync(entryStream, ctx.RequestAborted);
                     }
                 }
-                catch (Exception ex)
-                {
-                    return Results.Json(
-                        new WorkspaceUploadResponse { Success = false, Error = $"Failed to build archive: {ex.Message}" },
-                        CoreJsonContext.Default.WorkspaceUploadResponse,
-                        statusCode: StatusCodes.Status500InternalServerError);
-                }
 
-                ms.Seek(0, SeekOrigin.Begin);
-                return Results.File(ms, "application/zip", zipName);
+                return Results.Empty;
             }
 
             // Single file → stream directly.
@@ -442,14 +444,18 @@ internal static class WorkspaceFileEndpoints
 
         var full = Path.GetFullPath(Path.Combine(workspaceRoot, cleaned));
 
+        // Resolve symlink / junction targets so containment checks use
+        // the real filesystem path, not the logical reparse-point path.
+        var realFull = ResolveRealPath(full);
+
         // Final containment check after symlink/alias expansion.
-        if (!IsInsideDirectory(full, workspaceRoot))
+        if (!IsInsideDirectory(realFull, workspaceRoot))
         {
             error = "Path escapes the workspace root.";
             return null;
         }
 
-        return full;
+        return realFull;
     }
 
     /// <summary>
@@ -462,6 +468,45 @@ internal static class WorkspaceFileEndpoints
         return path.StartsWith(dir, StringComparison.OrdinalIgnoreCase)
                || string.Equals(path, directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                    StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Walks each component of <paramref name="path"/> and resolves any symlink or junction
+    /// targets so that containment checks operate on the real filesystem path.
+    /// Non-existent components are kept as-is (they cannot be links).
+    /// </summary>
+    private static string ResolveRealPath(string path)
+    {
+        var root = Path.GetPathRoot(path) ?? string.Empty;
+        var remaining = path[root.Length..];
+        var parts = remaining.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        var resolved = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        foreach (var part in parts)
+        {
+            var candidate = resolved + Path.DirectorySeparatorChar + part;
+
+            if (Directory.Exists(candidate))
+            {
+                var target = new DirectoryInfo(candidate).ResolveLinkTarget(returnFinalTarget: true);
+                resolved = target?.FullName ?? candidate;
+            }
+            else if (File.Exists(candidate))
+            {
+                var target = new FileInfo(candidate).ResolveLinkTarget(returnFinalTarget: true);
+                resolved = target?.FullName ?? candidate;
+            }
+            else
+            {
+                // Component does not exist yet — keep the logical path.
+                resolved = candidate;
+            }
+        }
+
+        return resolved;
     }
 
     private static bool IsZipFile(IFormFile file)

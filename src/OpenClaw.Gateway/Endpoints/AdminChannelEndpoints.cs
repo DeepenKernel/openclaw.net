@@ -3,6 +3,7 @@ using OpenClaw.Core.Models;
 using OpenClaw.Gateway.Bootstrap;
 using OpenClaw.Gateway.Channels;
 using OpenClaw.Gateway.Composition;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace OpenClaw.Gateway.Endpoints;
 
@@ -26,10 +27,10 @@ internal static class AdminChannelEndpoints
         var operations = runtime.Operations;
 
         // Resolve channel adapters at startup (only channels that support runtime updates).
-        var feishu = app.Services.GetRequiredService<FeishuChannel>();
-        var dingtalk = app.Services.GetRequiredService<DingTalkChannel>();
-        var wecom = app.Services.GetRequiredService<WeComChannel>();
-        var channelStore = app.Services.GetRequiredService<ChannelConfigStore>();
+        var feishu = app.Services.GetService<FeishuChannel>();
+        var wecom = app.Services.GetService<WeComChannel>();
+        var channelStore = app.Services.GetService<ChannelConfigStore>()
+            ?? new ChannelConfigStore(startup.Config.Memory.StoragePath, NullLogger<ChannelConfigStore>.Instance);
         var defaultDingTalkConfig = CloneDingTalkConfig(startup.Config.Channels.DingTalk);
         var defaultWeComConfig = CloneWeComConfig(startup.Config.Channels.WeCom);
 
@@ -43,7 +44,7 @@ internal static class AdminChannelEndpoints
 
             return channel switch
             {
-                "feishu" => Results.Json(feishu.GetEffectiveConfigForAdmin(), CoreJsonContext.Default.FeishuChannelConfig),
+                "feishu" => Results.Json(feishu?.GetEffectiveConfigForAdmin() ?? startup.Config.Channels.Feishu, CoreJsonContext.Default.FeishuChannelConfig),
                 "dingtalk" => Results.Json(GetEffectiveDingTalkConfig(channelStore, defaultDingTalkConfig), CoreJsonContext.Default.DingTalkChannelConfig),
                 "wecom" => Results.Json(GetEffectiveWeComConfig(channelStore, defaultWeComConfig), CoreJsonContext.Default.WeComChannelConfig),
 
@@ -108,8 +109,11 @@ internal static class AdminChannelEndpoints
                 case "feishu":
                     channelStore.Delete("feishu");
                     // Clear override, revert to appsettings config
-                    feishu.SetRuntimeConfig(null);
-                    await feishu.RestartAsync(ctx.RequestAborted);
+                    if (feishu is not null)
+                    {
+                        feishu.SetRuntimeConfig(null);
+                        await feishu.RestartAsync(ctx.RequestAborted);
+                    }
                     break;
                 case "dingtalk":
                     channelStore.Delete("dingtalk");
@@ -117,8 +121,11 @@ internal static class AdminChannelEndpoints
                     break;
                 case "wecom":
                     channelStore.Delete("wecom");
-                    wecom.SetRuntimeConfig(null);
-                    await wecom.RestartAsync(ctx.RequestAborted);
+                    if (wecom is not null)
+                    {
+                        wecom.SetRuntimeConfig(null);
+                        await wecom.RestartAsync(ctx.RequestAborted);
+                    }
                     break;
 
                 // Add new channels here
@@ -140,7 +147,7 @@ internal static class AdminChannelEndpoints
     // Each handler is responsible for deserializing its own typed config (AOT-safe)
     // and calling the channel's UpdateConfigAsync().
 
-    private static async Task<IResult> HandleFeishuUpdateAsync(HttpContext ctx, FeishuChannel feishu, ChannelConfigStore channelStore)
+    private static async Task<IResult> HandleFeishuUpdateAsync(HttpContext ctx, FeishuChannel? feishu, ChannelConfigStore channelStore)
     {
         FeishuChannelConfig? patch;
         try
@@ -164,8 +171,9 @@ internal static class AdminChannelEndpoints
         // Persist to volume first so the config survives a container restart.
         channelStore.Save("feishu", patch, CoreJsonContext.Default.FeishuChannelConfig);
 
-        // Apply in-memory and reconnect.
-        await feishu.UpdateConfigAsync(patch, ctx.RequestAborted);
+        // Apply in-memory and reconnect when a live adapter is registered.
+        if (feishu is not null)
+            await feishu.UpdateConfigAsync(patch, ctx.RequestAborted);
 
         return Results.Json(
             new OperationStatusResponse { Success = true, Message = "Feishu config persisted and channel reconnected." },
@@ -239,7 +247,7 @@ internal static class AdminChannelEndpoints
     // ── WeCom admin API helpers ──
 
     /// <summary>Handle WeCom config update request (POST /admin/channels/wecom/update)</summary>
-    private static async Task<IResult> HandleWeComUpdateAsync(HttpContext ctx, WeComChannel wecom, ChannelConfigStore channelStore)
+    private static async Task<IResult> HandleWeComUpdateAsync(HttpContext ctx, WeComChannel? wecom, ChannelConfigStore channelStore)
     {
         WeComChannelConfig? patch;
         try
@@ -265,8 +273,9 @@ internal static class AdminChannelEndpoints
         // Persist to volume storage so the config survives container restarts.
         channelStore.Save("wecom", patch, CoreJsonContext.Default.WeComChannelConfig);
 
-        // Hot-reload and reconnect
-        await wecom.UpdateConfigAsync(patch, ctx.RequestAborted);
+        // Hot-reload and reconnect when a live adapter is registered.
+        if (wecom is not null)
+            await wecom.UpdateConfigAsync(patch, ctx.RequestAborted);
 
         return Results.Json(
                 new OperationStatusResponse { Success = true, Message = "WeCom config persisted and reconnected." },

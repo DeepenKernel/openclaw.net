@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.Text.Json;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Security;
 using OpenClaw.Gateway.Bootstrap;
@@ -419,83 +418,6 @@ internal static class WorkspaceFileEndpoints
                 statusCode: StatusCodes.Status404NotFound);
         });
 
-        var mcpConfigStore = app.Services.GetRequiredService<OpenClaw.Gateway.Mcp.McpConfigStore>();
-        var mcpWatcherHolder = app.Services.GetRequiredService<OpenClaw.Gateway.Mcp.McpWatcherHolder>();
-
-        app.MapGet("/admin/workspace/mcp", async (HttpContext ctx) =>
-        {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: false);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-
-            // Built-in servers from appsettings — strip Headers so tokens are never sent to the browser
-            var builtinCfg = startup.Config.Plugins.Mcp;
-            var builtinServers = builtinCfg.Servers
-                .ToDictionary(
-                    kv => kv.Key,
-                    kv => (object)new
-                    {
-                        kv.Value.Enabled,
-                        kv.Value.Name,
-                        kv.Value.Transport,
-                        kv.Value.Url,
-                        kv.Value.ToolNamePrefix,
-                        kv.Value.StartupTimeoutSeconds,
-                        kv.Value.RequestTimeoutSeconds,
-                        HasToken = kv.Value.Headers.ContainsKey("Authorization")
-                    },
-                    StringComparer.Ordinal);
-            var builtinPayload = new { builtinCfg.Enabled, Servers = builtinServers };
-
-            var rawJson = await mcpConfigStore.TryLoadRawAsync(ctx.RequestAborted);
-            JsonElement? userConfig = null;
-            if (rawJson is not null)
-            {
-                try { userConfig = JsonDocument.Parse(rawJson).RootElement; }
-                catch { userConfig = null; }
-            }
-
-            return Results.Ok(new
-            {
-                builtin = (object)builtinPayload,
-                user = userConfig
-            });
-        });
-
-        app.MapPut("/admin/workspace/mcp", async (HttpContext ctx) =>
-        {
-            var auth = EndpointHelpers.AuthorizeOperatorRequest(ctx, startup, browserSessions, requireCsrf: true);
-            if (!auth.IsAuthorized)
-                return Results.Unauthorized();
-
-            if (!EndpointHelpers.TryConsumeOperatorRateLimit(ctx, operations, auth, "admin.control", out var blockedByPolicyId))
-                return Results.Json(
-                    new WorkspaceUploadResponse { Success = false, Error = $"Rate limit exceeded by policy '{blockedByPolicyId}'." },
-                    CoreJsonContext.Default.WorkspaceUploadResponse,
-                    statusCode: StatusCodes.Status429TooManyRequests);
-
-            string body;
-            using (var reader = new System.IO.StreamReader(ctx.Request.Body))
-                body = await reader.ReadToEndAsync(ctx.RequestAborted);
-
-            if (string.IsNullOrWhiteSpace(body))
-                return Results.BadRequest(new WorkspaceUploadResponse { Success = false, Error = "Request body is required." });
-
-            // Validate JSON is parseable
-            try
-            {
-                JsonDocument.Parse(body);
-            }
-            catch (JsonException ex)
-            {
-                return Results.BadRequest(new WorkspaceUploadResponse { Success = false, Error = $"Invalid JSON: {ex.Message}" });
-            }
-
-            await mcpConfigStore.SaveAsync(body, ctx.RequestAborted);
-            mcpWatcherHolder.Watcher?.TriggerReload();
-            AppendAudit(ctx, operations, auth, "workspace_mcp_update", "mcp.json", "Updated workspace MCP configuration.", success: true);
-            return Results.Ok(new WorkspaceUploadResponse { Success = true });
-        });
     }
 
     /// <summary>
